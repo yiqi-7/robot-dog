@@ -95,7 +95,7 @@ def launch_setup(context, *args, **kwargs):
         arguments=[
             "-topic", "robot_description",
             "-name", "quadruped",
-            "-x", "0", "-y", "-5.5", "-z", "0.32",
+            "-x", "0", "-y", "-5.5", "-z", "0.30",
         ],
         parameters=[{"use_sim_time": use_sim_time}],
     )
