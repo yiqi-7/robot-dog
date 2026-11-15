@@ -1,16 +1,21 @@
 <?xml version="1.0"?>
 <!--
-  四足机器人模型（12 自由度，3 DOF/腿）
+  四足机器人模型（12 自由度，3 DOF/腿）—— 参照 Unitree Go2 四足结构
 
-  几何约定：
-    - 站立时「机身中心 -> 足端触地点」水平距离 = 0.30 m（站立半径）
-      足端位于 (±0.24, ±0.18)，sqrt(0.24^2 + 0.18^2) = 0.30
-    - 大腿 0.13 m + 小腿 0.13 m，髋关节挂点在机身底面 (±0.18, ±0.12, -0.04)
-    - 所有关节为 0 时腿垂直向下，足垫中心在机身中心下方 0.30 m
+  Go2 构型关键特征（本模型逐条对应）：
+    1. 前后腿【镜像】：后腿的髋俯仰关节安装时绕 Z 轴旋转 180°（mirror=1）。
+       这样四条腿可以使用完全相同的关节角，而几何上自动呈现：
+         前腿：大腿向后倾、小腿向前收（"肘部朝后"，√ 形）
+         后腿：大腿向前倾、小腿向后收（"膝盖朝前"， 人 形）
+       支撑反力把机身向内挤，而不是向外撇 —— 抗侧滑的力学根源。
+    2. 站立为弯折式姿态（hip=0.35, knee=-0.70 rad）：四条腿关节角相同，
+       前后腿因镜像呈对折形态。
+    3. 站立时「机身中心 -> 足端触地点」水平距离 = 0.30 m（站立半径），
+       足端位于 (±0.24, ±0.18)；大腿 0.13 m + 小腿 0.13 m。
 
   每条腿的关节链：
     base_link -[ abduction_joint 绕X轴 ]> abduction_link
-              -[ hip_joint       绕Y轴 ]> upper_link
+              -[ hip_joint       绕Y轴，后腿安装镜像 ]> upper_link
               -[ knee_joint      绕Y轴 ]> lower_link
               -[ foot_joint      固定  ]> foot
 -->
@@ -32,6 +37,14 @@
   <xacro:property name="upper_len" value="0.13"/>
   <xacro:property name="lower_len" value="0.13"/>
   <xacro:property name="leg_r"     value="0.020"/>
+
+  <!-- Go2 式站立姿态（四条腿关节角相同，前后腿靠镜像呈现对折形态） -->
+  <xacro:property name="hip_stand"  value="0.35"/>
+  <xacro:property name="knee_stand" value="-0.70"/>
+  <!-- 弯折站立时髋关节到足端的竖直距离：
+       upper*cos(hip) + lower*cos(hip+knee) = 0.13*(cos0.35 + cos(-0.35)) ≈ 0.244 -->
+  <xacro:property name="fold_drop" value="${upper_len*cos(hip_stand) + lower_len*cos(hip_stand + knee_stand)}"/>
+
   <!-- 足端：平底足垫（真实四足机器人靠脚掌抓地，不用球体/滚轮） -->
   <xacro:property name="foot_l"    value="0.075"/>
   <xacro:property name="foot_w"    value="0.055"/>
@@ -39,8 +52,8 @@
   <xacro:property name="leg_mass"  value="0.35"/>
   <xacro:property name="foot_mass" value="0.08"/>
 
-  <!-- 足垫中心相对机身中心的下沉量 = 0.04(髋) + 0.13 + 0.13 = 0.30 -->
-  <xacro:property name="leg_drop" value="${body_h/2 + upper_len + lower_len}"/>
+  <!-- 足垫中心相对机身中心的下沉量 = 0.04(髋) + 弯折站立竖直距离 ≈ 0.284 -->
+  <xacro:property name="leg_drop" value="${body_h/2 + fold_drop}"/>
   <!-- 落地时机身中心高度 = leg_drop + 足垫半高 -->
   <xacro:property name="stand_z"  value="${leg_drop + foot_h/2}"/>
 
@@ -97,7 +110,9 @@
   </joint>
 
   <!-- ==================== 单腿宏 ==================== -->
-  <xacro:macro name="leg" params="prefix sx sy">
+  <!-- mirror=0：前腿（肘部朝后构型）；mirror=1：后腿（髋俯仰关节安装旋转
+       180°，镜像出"膝盖朝前"构型 —— 与 Unitree Go2 相同的实现手法） -->
+  <xacro:macro name="leg" params="prefix sx sy mirror:=0">
 
     <!-- 外摆连杆：从髋挂点斜向伸到足端正上方 -->
     <link name="${prefix}_abduction_link">
@@ -137,11 +152,13 @@
       </collision>
     </link>
 
-    <!-- 髋关节：绕 Y 轴摆动，腿前后迈 -->
+    <!-- 髋关节：绕 Y 轴摆动，腿前后迈。
+         后腿（mirror=1）安装时绕 Z 轴旋转 180°：同样的关节角在后腿上
+         自动产生镜像的几何姿态 —— 这是 Go2 构型的核心 -->
     <joint name="${prefix}_hip_joint" type="revolute">
       <parent link="${prefix}_abduction_link"/>
       <child link="${prefix}_upper_link"/>
-      <origin xyz="${sx*abd_dx} ${sy*abd_dy} 0" rpy="0 0 0"/>
+      <origin xyz="${sx*abd_dx} ${sy*abd_dy} 0" rpy="0 0 ${mirror*3.14159}"/>
       <axis xyz="0 1 0"/>
       <limit lower="-1.20" upper="1.20" effort="30" velocity="12"/>
       <dynamics damping="0.05" friction="0.0"/>
@@ -197,11 +214,11 @@
 
   </xacro:macro>
 
-  <!-- 四条腿：fl 左前 / fr 右前 / rl 左后 / rr 右后 -->
-  <xacro:leg prefix="fl" sx="1"  sy="1"/>
-  <xacro:leg prefix="fr" sx="1"  sy="-1"/>
-  <xacro:leg prefix="rl" sx="-1" sy="1"/>
-  <xacro:leg prefix="rr" sx="-1" sy="-1"/>
+  <!-- 四条腿：fl 左前 / fr 右前 / rl 左后 / rr 右后（后腿 mirror=1 镜像安装） -->
+  <xacro:leg prefix="fl" sx="1"  sy="1"  mirror="0"/>
+  <xacro:leg prefix="fr" sx="1"  sy="-1" mirror="0"/>
+  <xacro:leg prefix="rl" sx="-1" sy="1"  mirror="1"/>
+  <xacro:leg prefix="rr" sx="-1" sy="-1" mirror="1"/>
 
   <!-- ==================== Gazebo 关节位置控制器 ==================== -->
   <xacro:macro name="joint_pos_ctrl" params="joint topic p d">
@@ -223,8 +240,9 @@
 
   <xacro:macro name="leg_ctrls" params="prefix">
     <xacro:joint_pos_ctrl joint="${prefix}_abduction_joint" topic="/quadruped/${prefix}_abduction/cmd_pos" p="50" d="3.5"/>
-    <xacro:joint_pos_ctrl joint="${prefix}_hip_joint"       topic="/quadruped/${prefix}_hip/cmd_pos"       p="40" d="3.0"/>
-    <xacro:joint_pos_ctrl joint="${prefix}_knee_joint"      topic="/quadruped/${prefix}_knee/cmd_pos"      p="40" d="3.0"/>
+    <xacro:joint_pos_ctrl joint="${prefix}_hip_joint"       topic="/quadruped/${prefix}_hip/cmd_pos"       p="50" d="3.0"/>
+    <!-- 弯折站立姿态下膝关节需要撑住更大的支撑力矩，增益比直腿方案更高 -->
+    <xacro:joint_pos_ctrl joint="${prefix}_knee_joint"      topic="/quadruped/${prefix}_knee/cmd_pos"      p="60" d="3.5"/>
   </xacro:macro>
 
   <xacro:leg_ctrls prefix="fl"/>
@@ -322,8 +340,8 @@
       <camera>
         <horizontal_fov>1.2</horizontal_fov>
         <image>
-          <width>320</width>
-          <height>240</height>
+          <width>640</width>
+          <height>480</height>
           <format>R8G8B8</format>
         </image>
         <clip>
