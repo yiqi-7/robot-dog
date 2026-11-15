@@ -95,7 +95,10 @@ def launch_setup(context, *args, **kwargs):
         arguments=[
             "-topic", "robot_description",
             "-name", "quadruped",
-            "-x", "0", "-y", "-5.5", "-z", "0.30",
+            "-x", "0", "-y", "-5.6", "-z", "0.30",
+            # 出生朝向改为正北(+y)：竖走廊向南到北有 5.5 m 纵深；
+            # 若朝东则正前方 1.3 m 就是仓库西墙，一起步就撞墙
+            "-Y", "1.5708",
         ],
         parameters=[{"use_sim_time": use_sim_time}],
     )
