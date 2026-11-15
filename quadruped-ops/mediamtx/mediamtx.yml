@@ -1,0 +1,31 @@
+# MediaMTX 配置 —— 四足机器人图传（局域网）
+# 端口：RTSP 8554（机器人推流）/ WebRTC 8889（看板拉流）/ WebRTC-ICE UDP 8189 / API 9997
+# 完整参数说明见同目录 mediamtx.default.yml
+
+logLevel: info
+logDestinations: [stdout]
+
+api: yes
+apiAddress: :9997
+
+rtsp: yes
+rtspAddress: :8554
+rtmp: no
+hls: no
+srt: no
+moq: no
+
+webrtc: yes
+webrtcAddress: :8889
+# 纯局域网：不使用 STUN，主机候选即可，建连更快且离线可用
+webrtcICEServers2: []
+webrtcLocalUDPAddress: :8189
+
+pathDefaults:
+  # 任意路径均可直接推流（约定 cam/{robotId}），断流后自动释放
+  source: publisher
+
+# 允许推/拉任意路径（约定 cam/{robotId}）；如需收紧可改为正则路径：
+#   "~^cam/[A-Za-z0-9_-]+$":
+paths:
+  all_others:

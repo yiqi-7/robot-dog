@@ -5,6 +5,19 @@
 
 ![ROS2](https://img.shields.io/badge/ROS%202-Lyrical-blue) ![Gazebo](https://img.shields.io/badge/gz%20sim-10-orange) ![Platform](https://img.shields.io/badge/平台-Ubuntu%2026.04-green)
 
+## 仓库包含两部分
+
+| 目录 | 内容 | 归属 |
+|---|---|---|
+| `src/quadruped_sim/` | ROS 2 仿真功能包：机器狗模型、C++ 步态、传感器、SLAM/Nav2 | **本项目自研** |
+| `quadruped-ops/` | 厂区监控运维看板（局域网 MQTT 队管系统） | 课程/项目方提供，原样引入 |
+
+两层通过 **MQTT** 通信：机器狗上报遥测、接收任务；看板负责可视化与派单。
+接口约定见 [`quadruped-ops/MQTT-INTERFACE.md`](quadruped-ops/MQTT-INTERFACE.md)。
+
+> `quadruped-ops/` 为 vendored 引入，**非本项目原创**；其体积超限的模型/二进制未入库，
+> 详见 [`quadruped-ops/README-IN-REPO.md`](quadruped-ops/README-IN-REPO.md)。
+
 ## 项目结构
 
 ```
@@ -21,6 +34,7 @@ robot-dog/
 │       ├── config/           # Nav2 / RViz 配置
 │       ├── CMakeLists.txt
 │       └── package.xml
+├── quadruped-ops/            # 厂区监控运维看板（MQTT 队管系统，见其 README-IN-REPO.md）
 ├── models/                   # 外部模型文件（语音 TTS 等，体积大不入库部分见 .gitignore）
 ├── maps/                     # SLAM 建图输出（运行时生成）
 ├── captures/                 # 实验截图（运行时生成）

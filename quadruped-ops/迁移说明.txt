@@ -1,0 +1,28 @@
+四足机器人看板 · 迁移说明
+================================
+
+一、解压
+  用 7-Zip / WinRAR / Bandizip 解压本 7z 到任意目录（建议纯英文路径）。
+
+二、目标机需要装的软件
+  - 什么都不用装：已内置便携版 Node.js 运行时（runtime\node.exe，与语音模块版本精确匹配），
+    start.bat / stop.bat 双击即用
+  - Ollama（可选）：语音指令的 LLM 解析用。不装也能正常运行，自动降级为规则解析。
+      安装后执行一次：ollama pull qwen2.5:1.5b
+
+三、使用
+  - 双击 start.bat → 启动 MediaMTX(RTSP 8554 推流 / WebRTC 8889 拉流) + Broker(TCP 1883 / WS 8083) + 语音网关 + 看板(8080)，自动打开浏览器
+  - 双击 stop.bat  → 一键全部停止（Ollama 不动）
+  - 首次启动若弹 Windows 防火墙提示，请勾选允许。需要放行：TCP 1883/8083/8080/8554/8889 和 UDP 8189（WebRTC 媒体端口）
+
+四、迁移后无需改配置
+  - 看板会自动跟随当前机器的地址连接 Broker 和 MediaMTX（浏览器地址栏是什么 IP 就连什么 IP），换电脑/换 IP 不用改代码
+  - 机器人端只需把 Broker 地址（TCP 1883）和推流地址（RTSP 8554）改成新电脑的局域网 IP
+
+五、语音功能
+  - ASR 模型已内置在 models/sensevoice（约 230MB），解压即用
+  - 机器人传来的语音片段会自动保存在 voice-clips/（运行后自动生成），看板上可直接回放
+
+六、接口文档（机器人端对接用）
+  - MQTT-INTERFACE.md：主题、payload、QoS、任务时序、图像帧、告警
+  - VOICE-INTERFACE.md：语音上传 / TTS 播报 / 确认策略

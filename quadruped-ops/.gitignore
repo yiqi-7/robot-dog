@@ -1,0 +1,14 @@
+# ---- 体积超限/可再生成：不入库 ----
+# 便携 Node 运行时（89 MB）
+runtime/*
+!runtime/.gitkeep
+# ASR 模型（229 MB，超 GitHub 单文件 100 MB 限制）
+models/sensevoice/*.onnx
+# 流媒体服务器二进制（54 MB）
+mediamtx/*.exe
+# 依赖与构建产物
+node_modules/
+*.log
+# 运行时生成
+voice-clips/
+.vite-temp/
