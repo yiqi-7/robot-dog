@@ -1,0 +1,112 @@
+# RViz2 配置：四足机器人 + 厂区 SLAM 建图视图
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Enabled: true
+      Name: Grid
+      Value: true
+
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Frame Timeout: 15
+      Name: TF
+      Value: true
+
+    - Class: rviz_default_plugins/RobotModel
+      Description Topic:
+        Value: /robot_description
+      Enabled: true
+      Name: RobotModel
+      TF Prefix: ""
+      Value: true
+
+    - Class: rviz_default_plugins/LaserScan
+      Enabled: true
+      Name: LaserScan
+      Topic:
+        Value: /scan
+      Size (m): 0.03
+      Style: Flat Squares
+      Value: true
+
+    - Class: rviz_default_plugins/PointCloud2
+      Enabled: true
+      Name: DepthCloud
+      Topic:
+        Value: /depth_camera/points
+      Size (Pixels): 3
+      Style: Flat Squares
+      Value: true
+
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Name: DepthImage
+      Topic:
+        Value: /depth_camera/image
+      Value: true
+
+    - Class: rviz_default_plugins/Map
+      Enabled: true
+      Name: Map
+      Topic:
+        Value: /map
+      Alpha: 0.7
+      Value: true
+
+    - Class: rviz_default_plugins/Odometry
+      Enabled: true
+      Name: Odometry
+      Topic:
+        Value: /odom
+      Keep: 100
+      Value: true
+
+    - Class: rviz_default_plugins/Path
+      Enabled: true
+      Name: GlobalPath
+      Topic:
+        Value: /plan
+      Value: true
+
+    - Class: rviz_default_plugins/Map
+      Enabled: true
+      Name: LocalCostmap
+      Topic:
+        Value: /local_costmap/costmap
+      Alpha: 0.4
+      Value: true
+
+    - Class: rviz_default_plugins/Map
+      Enabled: true
+      Name: GlobalCostmap
+      Topic:
+        Value: /global_costmap/costmap
+      Alpha: 0.3
+      Value: true
+
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: map
+    Frame Rate: 30
+
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+    - Class: nav2_rviz_plugins/GoalTool
+
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Current View
+      Scale: 25
+      Target Frame: map

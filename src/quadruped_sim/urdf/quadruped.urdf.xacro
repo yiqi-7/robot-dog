@@ -1,0 +1,343 @@
+<?xml version="1.0"?>
+<!--
+  四足机器人模型（12 自由度，3 DOF/腿）
+
+  几何约定：
+    - 站立时「机身中心 -> 足端触地点」水平距离 = 0.30 m（站立半径）
+      足端位于 (±0.24, ±0.18)，sqrt(0.24^2 + 0.18^2) = 0.30
+    - 大腿 0.13 m + 小腿 0.13 m，髋关节挂点在机身底面 (±0.18, ±0.12, -0.04)
+    - 所有关节为 0 时腿垂直向下，足垫中心在机身中心下方 0.30 m
+
+  每条腿的关节链：
+    base_link -[ abduction_joint 绕X轴 ]> abduction_link
+              -[ hip_joint       绕Y轴 ]> upper_link
+              -[ knee_joint      绕Y轴 ]> lower_link
+              -[ foot_joint      固定  ]> foot
+-->
+<robot name="quadruped" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- ==================== 尺寸参数 ==================== -->
+  <xacro:property name="body_l"    value="0.36"/>
+  <xacro:property name="body_w"    value="0.24"/>
+  <xacro:property name="body_h"    value="0.08"/>
+  <xacro:property name="body_mass" value="6.0"/>
+
+  <xacro:property name="hip_dx"  value="0.18"/>
+  <xacro:property name="hip_dy"  value="0.12"/>
+  <xacro:property name="foot_dx" value="0.24"/>
+  <xacro:property name="foot_dy" value="0.18"/>
+  <xacro:property name="abd_dx"  value="${foot_dx - hip_dx}"/>
+  <xacro:property name="abd_dy"  value="${foot_dy - hip_dy}"/>
+
+  <xacro:property name="upper_len" value="0.13"/>
+  <xacro:property name="lower_len" value="0.13"/>
+  <xacro:property name="leg_r"     value="0.020"/>
+  <!-- 足端：平底足垫（真实四足机器人靠脚掌抓地，不用球体/滚轮） -->
+  <xacro:property name="foot_l"    value="0.075"/>
+  <xacro:property name="foot_w"    value="0.055"/>
+  <xacro:property name="foot_h"    value="0.030"/>
+  <xacro:property name="leg_mass"  value="0.35"/>
+  <xacro:property name="foot_mass" value="0.08"/>
+
+  <!-- 足垫中心相对机身中心的下沉量 = 0.04(髋) + 0.13 + 0.13 = 0.30 -->
+  <xacro:property name="leg_drop" value="${body_h/2 + upper_len + lower_len}"/>
+  <!-- 落地时机身中心高度 = leg_drop + 足垫半高 -->
+  <xacro:property name="stand_z"  value="${leg_drop + foot_h/2}"/>
+
+  <!-- ==================== 材质 ==================== -->
+  <material name="body_grey"><color rgba="0.25 0.27 0.30 1.0"/></material>
+  <material name="leg_orange"><color rgba="0.90 0.45 0.10 1.0"/></material>
+  <material name="foot_black"><color rgba="0.05 0.05 0.05 1.0"/></material>
+
+  <!-- ==================== 惯性宏 ==================== -->
+  <xacro:macro name="box_inertia" params="m l w h">
+    <inertial>
+      <mass value="${m}"/>
+      <inertia ixx="${m*(w*w+h*h)/12}" ixy="0" ixz="0"
+               iyy="${m*(l*l+h*h)/12}" iyz="0"
+               izz="${m*(l*l+w*w)/12}"/>
+    </inertial>
+  </xacro:macro>
+
+  <xacro:macro name="cyl_inertia" params="m r l">
+    <inertial>
+      <mass value="${m}"/>
+      <inertia ixx="${m*(3*r*r+l*l)/12}" ixy="0" ixz="0"
+               iyy="${m*(3*r*r+l*l)/12}" iyz="0"
+               izz="${m*r*r/2}"/>
+    </inertial>
+  </xacro:macro>
+
+  <!-- ==================== 机身 ==================== -->
+  <link name="base_link">
+    <xacro:box_inertia m="${body_mass}" l="${body_l}" w="${body_w}" h="${body_h}"/>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><box size="${body_l} ${body_w} ${body_h}"/></geometry>
+      <material name="body_grey"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><box size="${body_l} ${body_w} ${body_h}"/></geometry>
+    </collision>
+  </link>
+
+  <!-- 激光雷达安装座（机身顶部） -->
+  <link name="lidar_link">
+    <xacro:cyl_inertia m="0.05" r="0.03" l="0.04"/>
+    <visual>
+      <geometry><cylinder radius="0.03" length="0.04"/></geometry>
+      <material name="foot_black"/>
+    </visual>
+  </link>
+  <joint name="lidar_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="lidar_link"/>
+    <origin xyz="0 0 ${body_h/2 + 0.02}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ==================== 单腿宏 ==================== -->
+  <xacro:macro name="leg" params="prefix sx sy">
+
+    <!-- 外摆连杆：从髋挂点斜向伸到足端正上方 -->
+    <link name="${prefix}_abduction_link">
+      <xacro:box_inertia m="0.15" l="0.09" w="0.09" h="0.05"/>
+      <visual>
+        <origin xyz="${sx*abd_dx/2} ${sy*abd_dy/2} 0" rpy="0 0 0"/>
+        <geometry><box size="0.09 0.09 0.05"/></geometry>
+        <material name="body_grey"/>
+      </visual>
+      <collision>
+        <origin xyz="${sx*abd_dx/2} ${sy*abd_dy/2} 0" rpy="0 0 0"/>
+        <geometry><box size="0.09 0.09 0.05"/></geometry>
+      </collision>
+    </link>
+
+    <!-- 外摆关节：绕 X 轴转动，腿向外张开 -->
+    <joint name="${prefix}_abduction_joint" type="revolute">
+      <parent link="base_link"/>
+      <child link="${prefix}_abduction_link"/>
+      <origin xyz="${sx*hip_dx} ${sy*hip_dy} ${-body_h/2}" rpy="0 0 0"/>
+      <axis xyz="1 0 0"/>
+      <limit lower="-0.50" upper="0.50" effort="30" velocity="12"/>
+      <dynamics damping="0.05" friction="0.0"/>
+    </joint>
+
+    <!-- 大腿 -->
+    <link name="${prefix}_upper_link">
+      <xacro:cyl_inertia m="${leg_mass}" r="${leg_r}" l="${upper_len}"/>
+      <visual>
+        <origin xyz="0 0 ${-upper_len/2}" rpy="0 0 0"/>
+        <geometry><cylinder radius="${leg_r}" length="${upper_len}"/></geometry>
+        <material name="leg_orange"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 ${-upper_len/2}" rpy="0 0 0"/>
+        <geometry><cylinder radius="${leg_r}" length="${upper_len}"/></geometry>
+      </collision>
+    </link>
+
+    <!-- 髋关节：绕 Y 轴摆动，腿前后迈 -->
+    <joint name="${prefix}_hip_joint" type="revolute">
+      <parent link="${prefix}_abduction_link"/>
+      <child link="${prefix}_upper_link"/>
+      <origin xyz="${sx*abd_dx} ${sy*abd_dy} 0" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <limit lower="-1.20" upper="1.20" effort="30" velocity="12"/>
+      <dynamics damping="0.05" friction="0.0"/>
+    </joint>
+
+    <!-- 小腿 -->
+    <link name="${prefix}_lower_link">
+      <xacro:cyl_inertia m="${leg_mass}" r="${leg_r}" l="${lower_len}"/>
+      <visual>
+        <origin xyz="0 0 ${-lower_len/2}" rpy="0 0 0"/>
+        <geometry><cylinder radius="${leg_r}" length="${lower_len}"/></geometry>
+        <material name="leg_orange"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 ${-lower_len/2}" rpy="0 0 0"/>
+        <geometry><cylinder radius="${leg_r}" length="${lower_len}"/></geometry>
+      </collision>
+    </link>
+
+    <!-- 膝关节：绕 Y 轴，向后折 -->
+    <joint name="${prefix}_knee_joint" type="revolute">
+      <parent link="${prefix}_upper_link"/>
+      <child link="${prefix}_lower_link"/>
+      <origin xyz="0 0 ${-upper_len}" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <limit lower="-2.40" upper="0.20" effort="30" velocity="12"/>
+      <dynamics damping="0.05" friction="0.0"/>
+    </joint>
+
+    <!-- 足端：平底脚垫（不是滚轮，靠摩擦抓地行走） -->
+    <link name="${prefix}_foot">
+      <inertial>
+        <mass value="${foot_mass}"/>
+        <inertia ixx="${foot_mass*(foot_w*foot_w+foot_h*foot_h)/12}" ixy="0" ixz="0"
+                 iyy="${foot_mass*(foot_l*foot_l+foot_h*foot_h)/12}" iyz="0"
+                 izz="${foot_mass*(foot_l*foot_l+foot_w*foot_w)/12}"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry><box size="${foot_l} ${foot_w} ${foot_h}"/></geometry>
+        <material name="foot_black"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry><box size="${foot_l} ${foot_w} ${foot_h}"/></geometry>
+      </collision>
+    </link>
+    <joint name="${prefix}_foot_joint" type="fixed">
+      <parent link="${prefix}_lower_link"/>
+      <child link="${prefix}_foot"/>
+      <origin xyz="0 0 ${-lower_len}" rpy="0 0 0"/>
+    </joint>
+
+  </xacro:macro>
+
+  <!-- 四条腿：fl 左前 / fr 右前 / rl 左后 / rr 右后 -->
+  <xacro:leg prefix="fl" sx="1"  sy="1"/>
+  <xacro:leg prefix="fr" sx="1"  sy="-1"/>
+  <xacro:leg prefix="rl" sx="-1" sy="1"/>
+  <xacro:leg prefix="rr" sx="-1" sy="-1"/>
+
+  <!-- ==================== Gazebo 关节位置控制器 ==================== -->
+  <xacro:macro name="joint_pos_ctrl" params="joint topic p d">
+    <gazebo>
+      <plugin filename="gz-sim-joint-position-controller-system"
+              name="gz::sim::systems::JointPositionController">
+        <joint_name>${joint}</joint_name>
+        <topic>${topic}</topic>
+        <p_gain>${p}</p_gain>
+        <i_gain>0.15</i_gain>
+        <d_gain>${d}</d_gain>
+        <i_max>1.0</i_max>
+        <i_min>-1.0</i_min>
+        <cmd_max>60</cmd_max>
+        <cmd_min>-60</cmd_min>
+      </plugin>
+    </gazebo>
+  </xacro:macro>
+
+  <xacro:macro name="leg_ctrls" params="prefix">
+    <xacro:joint_pos_ctrl joint="${prefix}_abduction_joint" topic="/quadruped/${prefix}_abduction/cmd_pos" p="50" d="3.5"/>
+    <xacro:joint_pos_ctrl joint="${prefix}_hip_joint"       topic="/quadruped/${prefix}_hip/cmd_pos"       p="40" d="3.0"/>
+    <xacro:joint_pos_ctrl joint="${prefix}_knee_joint"      topic="/quadruped/${prefix}_knee/cmd_pos"      p="40" d="3.0"/>
+  </xacro:macro>
+
+  <xacro:leg_ctrls prefix="fl"/>
+  <xacro:leg_ctrls prefix="fr"/>
+  <xacro:leg_ctrls prefix="rl"/>
+  <xacro:leg_ctrls prefix="rr"/>
+
+  <!-- 关节状态发布 -->
+  <gazebo>
+    <plugin filename="gz-sim-joint-state-publisher-system"
+            name="gz::sim::systems::JointStatePublisher">
+      <topic>joint_states</topic>
+    </plugin>
+  </gazebo>
+
+  <gazebo>
+    <plugin filename="gz-sim-odometry-publisher-system"
+            name="gz::sim::systems::OdometryPublisher">
+      <odom_publish_frequency>20</odom_publish_frequency>
+      <robot_base_frame>base_link</robot_base_frame>
+      <odom_frame>odom</odom_frame>
+      <dimensions>2</dimensions>
+    </plugin>
+  </gazebo>
+
+  <!-- ==================== 传感器 ==================== -->
+  <gazebo reference="base_link">
+    <sensor name="imu" type="imu">
+      <always_on>true</always_on>
+      <update_rate>100</update_rate>
+      <visualize>false</visualize>
+      <topic>imu</topic>
+      <gz_frame_id>base_link</gz_frame_id>
+      <imu>
+        <angular_velocity>
+          <x><noise type="gaussian"><mean>0.0</mean><stddev>0.0002</stddev></noise></x>
+          <y><noise type="gaussian"><mean>0.0</mean><stddev>0.0002</stddev></noise></y>
+          <z><noise type="gaussian"><mean>0.0</mean><stddev>0.0002</stddev></noise></z>
+        </angular_velocity>
+        <linear_acceleration>
+          <x><noise type="gaussian"><mean>0.0</mean><stddev>0.0017</stddev></noise></x>
+          <y><noise type="gaussian"><mean>0.0</mean><stddev>0.0017</stddev></noise></y>
+          <z><noise type="gaussian"><mean>0.0</mean><stddev>0.0017</stddev></noise></z>
+        </linear_acceleration>
+      </imu>
+    </sensor>
+  </gazebo>
+
+  <gazebo reference="lidar_link">
+    <sensor name="lidar" type="gpu_lidar">
+      <always_on>true</always_on>
+      <update_rate>10</update_rate>
+      <visualize>true</visualize>
+      <topic>scan</topic>
+      <gz_frame_id>lidar_link</gz_frame_id>
+      <lidar>
+        <scan>
+          <horizontal>
+            <samples>360</samples>
+            <resolution>1</resolution>
+            <min_angle>-3.14159</min_angle>
+            <max_angle>3.14159</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>0.12</min>
+          <max>8.0</max>
+          <resolution>0.01</resolution>
+        </range>
+      </lidar>
+    </sensor>
+  </gazebo>
+
+  <!-- ==================== 前向深度相机 ==================== -->
+  <link name="depth_camera_link">
+    <xacro:box_inertia m="0.05" l="0.05" w="0.09" h="0.03"/>
+    <visual>
+      <geometry><box size="0.05 0.09 0.03"/></geometry>
+      <material name="foot_black"/>
+    </visual>
+  </link>
+  <joint name="depth_camera_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="depth_camera_link"/>
+    <origin xyz="${body_l/2 + 0.025} 0 0.01" rpy="0 0 0"/>
+  </joint>
+
+  <gazebo reference="depth_camera_link">
+    <sensor name="depth_camera" type="depth_camera">
+      <always_on>true</always_on>
+      <update_rate>15</update_rate>
+      <visualize>true</visualize>
+      <topic>depth_camera</topic>
+      <gz_frame_id>depth_camera_link</gz_frame_id>
+      <camera>
+        <horizontal_fov>1.2</horizontal_fov>
+        <image>
+          <width>320</width>
+          <height>240</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip>
+          <near>0.1</near>
+          <far>8.0</far>
+        </clip>
+      </camera>
+    </sensor>
+  </gazebo>
+
+  <!-- 足端摩擦，防止打滑（平底足垫需要较高摩擦系数） -->
+  <gazebo reference="fl_foot"><mu1>1.5</mu1><mu2>1.5</mu2><kp>1000000</kp><kd>100</kd></gazebo>
+  <gazebo reference="fr_foot"><mu1>1.5</mu1><mu2>1.5</mu2><kp>1000000</kp><kd>100</kd></gazebo>
+  <gazebo reference="rl_foot"><mu1>1.5</mu1><mu2>1.5</mu2><kp>1000000</kp><kd>100</kd></gazebo>
+  <gazebo reference="rr_foot"><mu1>1.5</mu1><mu2>1.5</mu2><kp>1000000</kp><kd>100</kd></gazebo>
+
+</robot>
