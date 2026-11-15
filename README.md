@@ -119,6 +119,7 @@ RViz2 工具栏选择 **Nav2 Goal**，在地图上点一个位置拖动定朝向
 
 - [MQTT-INTERFACE.md](MQTT-INTERFACE.md)：厂区监控运维看板的 MQTT 接口规范（v2.1）
 - [VOICE-INTERFACE.md](VOICE-INTERFACE.md)：语音指令链路（ASR → LLM → 任务下发）
+- [NAV2-GUIDE.md](NAV2-GUIDE.md)：Nav2 导航使用指南（CLI 发目标、实测性能、已知问题）
 
 ## 已知限制
 
