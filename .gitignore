@@ -3,11 +3,16 @@ build/
 install/
 log/
 
-# 运行数据（录制、截图、地图、模型缓存）
-captures/
-maps/
-recordings/
-models/
+# 运行数据：忽略目录内容，但保留目录骨架（.gitkeep）
+captures/*
+!captures/.gitkeep
+maps/*
+!maps/.gitkeep
+recordings/*
+!recordings/.gitkeep
+
+# 模型缓存：piper 语音模型体积大（61MB），只入库配置文件
+models/piper/*.onnx
 
 # Python 缓存
 __pycache__/
@@ -15,4 +20,3 @@ __pycache__/
 
 # 系统文件
 .DS_Store
-models/piper/*.onnx
