@@ -45,10 +45,40 @@ target_link_libraries(camera_info_pub
   sensor_msgs::sensor_msgs)
 
 # ---------------------------------------------------------------------------
+# mqtt_bridge：机器狗 ↔ 云端看板 MQTT 桥（第三章 3.2）
+#   上行：/odom + /joint_states -> {P}/robots/{id}/state
+#   下行：{P}/robots/{id}/cmd  -> /cmd_vel
+# 依赖 libmosquitto-dev（C 客户端）+ nlohmann-json（组 JSON）
+# ---------------------------------------------------------------------------
+set(BUILT_TARGETS gait_controller odom_pub camera_info_pub)
+
+find_library(MOSQUITTO_LIBRARY NAMES mosquitto)
+find_path(MOSQUITTO_INCLUDE_DIR NAMES mosquitto.h)
+find_package(nlohmann_json QUIET)
+
+if(NOT MOSQUITTO_LIBRARY OR NOT MOSQUITTO_INCLUDE_DIR)
+  message(WARNING
+    "未找到 libmosquitto，跳过 mqtt_bridge。安装：sudo apt install libmosquitto-dev")
+else()
+  add_executable(mqtt_bridge src/mqtt_bridge.cpp)
+  target_include_directories(mqtt_bridge PRIVATE ${MOSQUITTO_INCLUDE_DIR})
+  target_link_libraries(mqtt_bridge
+    rclcpp::rclcpp
+    geometry_msgs::geometry_msgs
+    nav_msgs::nav_msgs
+    sensor_msgs::sensor_msgs
+    ${MOSQUITTO_LIBRARY})
+  if(nlohmann_json_FOUND)
+    target_link_libraries(mqtt_bridge nlohmann_json::nlohmann_json)
+  endif()
+  list(APPEND BUILT_TARGETS mqtt_bridge)
+  message(STATUS "mqtt_bridge 已启用：${MOSQUITTO_LIBRARY}")
+endif()
+
+# ---------------------------------------------------------------------------
 # 安装：可执行文件 -> lib/<pkg>，资源目录 -> share/<pkg>
 # ---------------------------------------------------------------------------
-install(TARGETS gait_controller odom_pub camera_info_pub
-        DESTINATION lib/${PROJECT_NAME})
+install(TARGETS ${BUILT_TARGETS} DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY urdf launch worlds config
         DESTINATION share/${PROJECT_NAME})
