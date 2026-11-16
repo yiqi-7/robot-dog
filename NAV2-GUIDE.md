@@ -108,6 +108,18 @@ ros2 launch quadruped_sim quadruped_gz.launch.py gait:=champ nav:=true \
    pkill -f nav2_; pkill -f slam_toolbox; pkill -f lifecycle_manager
    ```
 
+## 巡逻验收与"站在致命格上"问题
+
+4 航点巡逻（北走廊 -> 墙洞东 -> 货架南 -> 出生点）实测：
+- 单程逐段全部可达；但**连续巡逻**时，目标 3/4 偶发
+  `Failed to create plan`（NavFn error 208）。
+- 根因：机器人贴墙停下后，obstacle_layer 把机器人脚下格标记为致命
+  （robot_radius 0.35 内有 0.25~0.5 m 的墙体回波），NavFn 从致命格
+  出发无法规划。
+- **重发同一目标即可恢复**（机器人挪动/激光清理后代价刷新），
+  实测重发后 32.8 s 到达、误差 0.19 m。
+- 上层应用应把 208 视为"可重试"错误：取消后等待 2~3 s 再发。
+
 ## 发导航目标
 
 ```bash
