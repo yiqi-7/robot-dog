@@ -115,15 +115,15 @@ const std::vector<SitePoint> kPoints = {
   {"warehouse-dock",  "仓库-月台",     8.5, -1.5, "warehouse",  nullptr},
   {"a-line-1",        "车间A-1号产线", -7.0, -3.7, "workshop-a", nullptr},
   {"a-line-2",        "车间A-2号产线", -3.5, -3.7, "workshop-a", nullptr},
-  {"a-west-gate",     "车间A-西门",    -8.5, -1.2, "workshop-a", nullptr},
+  {"a-west-gate",     "车间A-西门",    -7.8, -1.2, "workshop-a", nullptr},  // 内缩：原 -8.5 超地图西界
   {"b-assembly",      "车间B-装配台",  -7.5,  3.8, "workshop-b", nullptr},
   {"b-east-gate",     "车间B-东门",    -2.5,  3.0, "workshop-b", nullptr},
   {"power-room",      "配电室",         7.1,  2.6, "power",      nullptr},
-  {"boiler",          "锅炉房",         5.2,  5.5, "control",    nullptr},
-  {"charger-1",       "充电区-1号桩",   1.9,  4.9, "charging",   "charger"},
-  {"charger-2",       "充电区-2号桩",   3.2,  4.9, "charging",   "charger"},
-  {"control-room",    "中控室",         7.1,  6.3, "control",    nullptr},
-  {"north-gate",      "厂区北门",       0.0,  6.4, nullptr,      nullptr},
+  {"boiler",          "锅炉房",         5.2,  4.4, "control",    nullptr},  // 内缩：原 5.5 超地图北界
+  {"charger-1",       "充电区-1号桩",   1.9,  4.2, "charging",   "charger"},  // 内缩：原 4.9 超北界 4.73
+  {"charger-2",       "充电区-2号桩",   3.2,  4.2, "charging",   "charger"},  // 内缩：同上
+  {"control-room",    "中控室",         7.1,  4.4, "control",    nullptr},  // 内缩：原 6.3 超北界
+  {"north-gate",      "厂区北门",       0.0,  4.4, nullptr,      nullptr},  // 内缩：原 6.4 超北界
   {"ring-road",       "厂区环路",       0.0, -6.3, nullptr,      nullptr},
 };
 
