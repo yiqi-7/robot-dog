@@ -12,6 +12,7 @@
   ros2 launch quadruped_sim quadruped_gz.launch.py
   ros2 launch quadruped_sim quadruped_gz.launch.py gui:=false     # 无 Gazebo 界面
   ros2 launch quadruped_sim quadruped_gz.launch.py gz_minimized:=false  # 窗口不最小化
+  ros2 launch quadruped_sim quadruped_gz.launch.py gait:=champ   # 用 CHAMP 步态控制
   ros2 launch quadruped_sim quadruped_gz.launch.py teleop:=false  # 不启动键盘遥控
   ros2 launch quadruped_sim quadruped_gz.launch.py rviz:=false nav:=false  # 只跑仿真
 """
@@ -50,7 +51,19 @@ def launch_setup(context, *args, **kwargs):
     teleop = LaunchConfiguration("teleop").perform(context)
     rviz_on = LaunchConfiguration("rviz").perform(context)
     nav_on = LaunchConfiguration("nav").perform(context)
-    gait_on = LaunchConfiguration("gait").perform(context)
+    # gait 取值：trot（本项目自研 trot 步态）/ champ（CHAMP 通用步态控制器）/ none
+    # 兼容旧写法：true -> trot，false -> none
+    gait_mode = LaunchConfiguration("gait").perform(context).strip().lower()
+    if gait_mode in ("true", "1", ""):
+        gait_mode = "trot"
+    elif gait_mode in ("false", "0"):
+        gait_mode = "none"
+    if gait_mode not in ("trot", "champ", "none"):
+        raise RuntimeError(
+            f"gait 参数只能是 trot / champ / none，收到：{gait_mode}"
+        )
+    gait_on = "true" if gait_mode == "trot" else "false"
+    champ_on = "true" if gait_mode == "champ" else "false"
     gz_minimized = LaunchConfiguration("gz_minimized").perform(context)
 
     # 把 Gazebo 窗口收进任务栏：启动后调用本包的小工具发送最小化请求，
@@ -160,6 +173,19 @@ def launch_setup(context, *args, **kwargs):
         output="screen",
         parameters=[{"use_sim_time": use_sim_time}],
         condition=IfCondition(gait_on),
+    )
+
+    # CHAMP 步态控制器（vendored 上游 champ_base + 本项目适配配置）
+    # 它把 /cmd_vel 转成 12 路关节角 -> /champ/joint_cmd
+    # -> champ_joint_relay -> /quadruped/<leg>_<joint>/cmd_pos
+    champ_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                get_package_share_directory("quadruped_champ_config"),
+                "launch", "champ_controller.launch.py",
+            )
+        ),
+        condition=IfCondition(champ_on),
     )
 
     odom = Node(
@@ -274,6 +300,8 @@ def launch_setup(context, *args, **kwargs):
         TimerAction(period=3.0, actions=[spawn]),
         TimerAction(period=5.0, actions=[bridge, gait, odom, camera_info]),
         TimerAction(period=8.0, actions=[slam, navigation, nav_lifecycle_manager]),
+        # CHAMP 依赖 gz 桥接（/joint_states 与 cmd_pos 都要通），放到 8 秒起
+        TimerAction(period=8.0, actions=[champ_launch]),
         rviz_node,
         teleop_node,
     ]
@@ -300,7 +328,9 @@ def generate_launch_description():
                 "nav", default_value="true", description="是否启动 Nav2 + SLAM"
             ),
             DeclareLaunchArgument(
-                "gait", default_value="true", description="是否启动 trot 步态控制"
+                "gait",
+                default_value="trot",
+                description="步态控制器：trot(自研) / champ(通用) / none(不启动)",
             ),
             DeclareLaunchArgument(
                 "gz_minimized",
