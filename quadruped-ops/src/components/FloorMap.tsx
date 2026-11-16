@@ -91,7 +91,12 @@ export function FloorMap({
 
   return (
     <div className={cn("relative", className)}>
-      <svg viewBox={`0 0 ${W} ${H}`} className="block h-auto w-full">
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        className="block w-full"
+        style={{ minHeight: 420, maxHeight: "72vh" }}
+        preserveAspectRatio="xMidYMid meet"
+      >
         <defs>
           <pattern id="map-grid" width={40 * u} height={40 * u} patternUnits="userSpaceOnUse">
             <path

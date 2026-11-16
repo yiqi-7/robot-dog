@@ -98,7 +98,8 @@ export default function Home() {
         />
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-[280px_minmax(0,1fr)_380px]">
+      {/* 地图是主视图：中列放大到 1.6fr，两侧列稍收窄让位 */}
+      <div className="grid gap-3 lg:grid-cols-[240px_minmax(0,1.6fr)_340px]">
         {/* 左：机器人队列 */}
         <Panel
           title="机器人队列 / FLEET"
