@@ -875,7 +875,7 @@
 
     <model name="wh_shelf_s1">
       <static>true</static>
-      <pose>5.000 -5.200 0.900 0 0 0.0000</pose>
+      <pose>5.600 -5.200 0.900 0 0 0.0000</pose>
       <link name="link">
         <collision name="collision">
           <geometry><box><size>1.400 0.500 1.800</size></box></geometry>

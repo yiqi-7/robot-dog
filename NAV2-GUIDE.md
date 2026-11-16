@@ -87,7 +87,16 @@ ros2 launch quadruped_sim quadruped_gz.launch.py gait:=champ nav:=true \
    墙体回波经 TF 变换后落入 stop 多边形，触发后 collision_monitor
    不再转发任何指令（连零值都不发），整条速度链断流。
    已用 polygon_stop.enabled: false 停用，避障由 costmap 障碍层承担。
-4. **货架间 1.0 m 窄缝无法穿越**：wh_shelf_s0 与 wh_shelf_s1 之间
+4. **货架缝已放宽 1.0 -> 1.6 m（已解决）**：wh_shelf_s1 东移 0.6 m，
+   全厂现在全部可达；南侧目标实测成功（误差 0.25 m）。
+   注意两点配套修正：
+   - global_costmap 必须有 static_layer：只有 obstacle_layer 时，
+     未被激光扫过的区域全是未知格，allow_unknown=false 会直接
+     "Failed to create plan"；allow_unknown=true 则出现穿墙路径。
+   - 不要把 SLAM 图的未知区(205)涂成致命(0)再喂给 AMCL：似然场
+     会把大片致命当真实墙体，定位发散到 9 m 外。AMCL 用原始图，
+     规划器用 static_layer + allow_unknown=false 组合。
+5. **窄缝穿越原问题（历史记录）**：wh_shelf_s0 与 wh_shelf_s1 之间
    x∈[3.3,4.3] 的缝，物理上机器人（约 0.5 m 宽）能过，但 DWB 以
    0.5 rad/s 的转向能力跟不住这么紧的路径，会在缝口 (3.3,-4.7)
    徘徊。目标在货架南侧时请走西/东两侧绕行，或等待调优 DWB。

@@ -94,8 +94,8 @@ controller_server:
       decel_lim_theta: -1.0
       vx_samples: 10
       vy_samples: 1
-      vtheta_samples: 20
-      sim_time: 1.5
+      vtheta_samples: 40
+      sim_time: 2.0
       linear_granularity: 0.05
       angular_granularity: 0.025
       transform_tolerance: 0.2
@@ -150,13 +150,20 @@ global_costmap:
       robot_base_frame: base_link
       robot_radius: 0.35
       resolution: 0.05
-      track_unknown_space: true
+      # 未知区当自由：静态层(地图)负责已知墙体，obstacle_layer 负责
+      # 运行中新出现的障碍；若 track_unknown_space=true 且无静态层，
+      # 未扫过的区域全是未知，规划器会拒绝规划
+      track_unknown_space: false
       rolling_window: false
       width: 22
       height: 16
       origin_x: -11.0
       origin_y: -8.0
-      plugins: ["obstacle_layer", "inflation_layer"]
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        enabled: true
+        map_subscribe_transient_local: true
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: true
@@ -190,7 +197,9 @@ planner_server:
       plugin: "nav2_navfn_planner::NavfnPlanner"
       tolerance: 0.5
       use_astar: false
-      allow_unknown: true
+      # 静态地图里大片未探索区(未知)，allow_unknown=true 时规划器把未知
+      # 当可通行，出现"穿墙"路径；false 后只在已探索区域规划
+      allow_unknown: false
 
 smoother_server:
   ros__parameters:
