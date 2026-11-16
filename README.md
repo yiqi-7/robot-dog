@@ -60,6 +60,9 @@ robot-dog/
 | SLAM 建图 | slam_toolbox 在线建图 | ✅ |
 | 导航 | Nav2 全栈（8 节点 + 碰撞监控） | ✅ |
 | 键盘遥控 | teleop_twist_keyboard（支持前进/后退/转向） | ✅ |
+| 静态地图定位 | AMCL + map_server（`map:=<yaml>` 一键切换） | ✅ |
+| 多航点巡逻 | patrol_node（C++）：航点参数可配、失败自愈、进度上报；40 分钟长稳 6 轮环线 30/30 航点全到达、零失败 | ✅ |
+| 运维看板联动 | mqtt_bridge 把位姿/任务/巡逻进度上报看板 | ✅ |
 
 ## 快速开始
 
