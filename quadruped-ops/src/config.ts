@@ -39,8 +39,8 @@ export const MAP = {
 
 /** 流媒体（MediaMTX）配置：机器人 RTSP 推流 8554，看板 WebRTC(WHEP) 拉流 8889 */
 export const STREAMING = {
-  /** WHEP 拉流基地址；自动跟随页面主机名（MediaMTX 与看板由 start.bat 同机启动） */
-  whepBase: `http://${typeof window !== "undefined" && window.location.hostname ? window.location.hostname : "localhost"}:8889`,
+  /** WHEP 拉流基地址：MediaMTX 部署在云服务器（RTSP 机器人推流 -> WebRTC 看板拉流） */
+  whepBase: "http://43.172.91.67:8889",
   /** 摄像头流路径约定：机器人推 rtsp://<本机IP>:8554/<path>，看板从 <whepBase>/<path>/whep 拉流 */
   camStreamPath: (robotId: string) => `cam/${robotId}`,
   /** 无流 / 断流时的重试间隔 ms */

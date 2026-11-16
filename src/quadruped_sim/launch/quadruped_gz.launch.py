@@ -238,6 +238,24 @@ def launch_setup(context, *args, **kwargs):
         ],
     )
 
+    # 视觉上云：JPEG 快照(MQTT) + H264 推流(RTSP，禁 B 帧)
+    image_sender = Node(
+        package="quadruped_sim",
+        executable="image_sender",
+        name="image_sender",
+        output="screen",
+        parameters=[
+            {
+                "use_sim_time": use_sim_time,
+                "robot_id": "robot-01",
+                "jpeg_quality": 90,
+                "jpeg_fps": 1.0,
+                "rtsp_server": "43.172.91.67",
+                "rtsp_port": 8554,
+            }
+        ],
+    )
+
     # ---------- 6. Nav2（slam_toolbox 在线建图 + 导航） ----------
     # 模式 A：无地图 -> slam_toolbox 在线建图
     slam = IncludeLaunchDescription(
@@ -361,7 +379,7 @@ def launch_setup(context, *args, **kwargs):
         robot_state_publisher,
         gz_sim,
         TimerAction(period=3.0, actions=[spawn]),
-        TimerAction(period=5.0, actions=[bridge, gait, odom, camera_info, rgb_camera_info]),
+        TimerAction(period=5.0, actions=[bridge, gait, odom, camera_info, rgb_camera_info, image_sender]),
         # CHAMP 依赖 gz 桥接（/joint_states 与 cmd_pos 都要通），放到 8 秒起
         TimerAction(period=8.0, actions=[champ_launch]),
         # SLAM 先起：它要初始化 Ceres 求解器并发布 map->odom，
