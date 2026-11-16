@@ -50,7 +50,9 @@ target_link_libraries(camera_info_pub
 #   下行：{P}/robots/{id}/cmd  -> /cmd_vel
 # 依赖 libmosquitto-dev（C 客户端）+ nlohmann-json（组 JSON）
 # ---------------------------------------------------------------------------
-set(BUILT_TARGETS gait_controller odom_pub camera_info_pub)
+add_executable(champ_joint_relay src/champ_joint_relay.cpp)
+target_link_libraries(champ_joint_relay rclcpp::rclcpp sensor_msgs::sensor_msgs std_msgs::std_msgs)
+set(BUILT_TARGETS champ_joint_relay gait_controller odom_pub camera_info_pub)
 
 find_library(MOSQUITTO_LIBRARY NAMES mosquitto)
 find_path(MOSQUITTO_INCLUDE_DIR NAMES mosquitto.h)

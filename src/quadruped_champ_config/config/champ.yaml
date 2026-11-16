@@ -1,0 +1,81 @@
+# CHAMP 步态控制器参数 —— 针对本仓库的 Go2 构型机器狗
+# 由 launch/champ_controller.launch.py 传给 quadruped_controller_node
+/**:
+  ros__parameters:
+    # ---- 运行开关 ----
+    # gazebo:=true 时 champ 改发 JointTrajectory 给 Classic Gazebo 的轨迹控制器；
+    # 我们用 gz sim（新 Gazebo），必须 false，走 joint_states 位置指令路径
+    gazebo: false
+    publish_joint_states: true     # 发布关节位置指令（经 relay 转 gz cmd_pos）
+    publish_joint_control: false   # 不用 Classic Gazebo 的 trajectory 控制器
+    publish_foot_contacts: false   # gz sim 无现成足端接触话题，先关闭
+    joint_controller_topic: "joint_controller/state"
+    loop_rate: 100                 # 控制内环频率 Hz
+
+    # ---- 关节映射 ----
+    # champ 的语义角色 -> 本 URDF 实际关节名：
+    #   hip_joint       = 侧摆（我们叫 *_abduction_joint）
+    #   upper_leg_joint = 大腿（我们叫 *_hip_joint）
+    #   lower_leg_joint = 膝关节（我们叫 *_knee_joint）
+    #   foot_joint      = 足端（固定关节，仅用于运动学求足端位置）
+    joints_map:
+      left_front:
+        - fl_abduction_joint
+        - fl_hip_joint
+        - fl_knee_joint
+        - fl_foot_joint
+      right_front:
+        - fr_abduction_joint
+        - fr_hip_joint
+        - fr_knee_joint
+        - fr_foot_joint
+      left_hind:
+        - rl_abduction_joint
+        - rl_hip_joint
+        - rl_knee_joint
+        - rl_foot_joint
+      right_hind:
+        - rr_abduction_joint
+        - rr_hip_joint
+        - rr_knee_joint
+        - rr_foot_joint
+
+    # ---- 连杆映射（顺序与 joints_map 对应） ----
+    links_map:
+      base: base_link
+      left_front:
+        - fl_abduction_link
+        - fl_upper_link
+        - fl_lower_link
+        - fl_foot
+      right_front:
+        - fr_abduction_link
+        - fr_upper_link
+        - fr_lower_link
+        - fr_foot
+      left_hind:
+        - rl_abduction_link
+        - rl_upper_link
+        - rl_lower_link
+        - rl_foot
+      right_hind:
+        - rr_abduction_link
+        - rr_upper_link
+        - rr_lower_link
+        - rr_foot
+
+    # ---- 步态参数 ----
+    gait:
+      # 膝弯方向：前腿 >（膝向后弯），后腿 <（膝向前弯）——犬式构型。
+      # 与 URDF 后腿镜像（mirror=1）的设计对应；若实测站姿不对再调
+      knee_orientation: "><"
+      pantograph_leg: false
+      odom_scaler: 1.0
+      max_linear_velocity_x: 0.5
+      max_linear_velocity_y: 0.2
+      max_angular_velocity_z: 1.0
+      com_x_translation: 0.0
+      swing_height: 0.05
+      stance_depth: 0.0
+      stance_duration: 0.25
+      nominal_height: 0.30
