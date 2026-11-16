@@ -10,7 +10,7 @@
     publish_joint_control: false   # 不用 Classic Gazebo 的 trajectory 控制器
     publish_foot_contacts: false   # gz sim 无现成足端接触话题，先关闭
     joint_controller_topic: "joint_controller/state"
-    loop_rate: 100                 # 控制内环频率 Hz
+    loop_rate: 100.0                # 控制内环频率 Hz
 
     # ---- 关节映射 ----
     # champ 的语义角色 -> 本 URDF 实际关节名：
@@ -68,7 +68,7 @@
     gait:
       # 膝弯方向：前腿 >（膝向后弯），后腿 <（膝向前弯）——犬式构型。
       # 与 URDF 后腿镜像（mirror=1）的设计对应；若实测站姿不对再调
-      knee_orientation: "><"
+      knee_orientation: ">>"
       pantograph_leg: false
       odom_scaler: 1.0
       max_linear_velocity_x: 0.5
@@ -78,4 +78,4 @@
       swing_height: 0.05
       stance_depth: 0.0
       stance_duration: 0.25
-      nominal_height: 0.30
+      nominal_height: 0.25

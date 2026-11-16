@@ -217,8 +217,8 @@
   <!-- 四条腿：fl 左前 / fr 右前 / rl 左后 / rr 右后（后腿 mirror=1 镜像安装） -->
   <xacro:leg prefix="fl" sx="1"  sy="1"  mirror="0"/>
   <xacro:leg prefix="fr" sx="1"  sy="-1" mirror="0"/>
-  <xacro:leg prefix="rl" sx="-1" sy="1"  mirror="1"/>
-  <xacro:leg prefix="rr" sx="-1" sy="-1" mirror="1"/>
+  <xacro:leg prefix="rl" sx="-1" sy="1"  mirror="0"/>
+  <xacro:leg prefix="rr" sx="-1" sy="-1" mirror="0"/>
 
   <!-- ==================== Gazebo 关节位置控制器 ==================== -->
   <xacro:macro name="joint_pos_ctrl" params="joint topic p d">
