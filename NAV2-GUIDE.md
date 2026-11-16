@@ -108,7 +108,31 @@ ros2 launch quadruped_sim quadruped_gz.launch.py gait:=champ nav:=true \
    pkill -f nav2_; pkill -f slam_toolbox; pkill -f lifecycle_manager
    ```
 
-## 巡逻验收与"站在致命格上"问题
+## 膨胀半径必须大于机器人半径（本节是稳定性的根）
+
+`inflation_radius == robot_radius` 时膨胀层没有软过渡带：离障碍
+0.35 m 内的格子全是硬致命 254。机器人贴墙/贴货架停稳（物理上完全
+正常）后，它脚下格就是致命，NavFn 拒绝从致命格起飞 -> error 208，
+BT 的 ClearEntireCostmap 恢复动作也救不了（致命格来自 static_layer，
+清了会重新铺回来）。
+
+修法（参照老师示例 class9-backup 的配置）：
+- inflation_radius 0.35 -> 0.60（两处 costmap），0.35~0.60 之间是
+  渐变软代价，贴墙停下不再致命
+- 规划器 allow_unknown: true（静态地图已完整，与老师一致）
+
+修完后实测：巡逻环线 3 轮 17 个航点全部一次到达，零重试零跳过。
+
+## 巡逻节点 quadruped_sim/patrol_node
+
+C++ 航点环线巡逻（北走廊 -> 墙洞东 -> 缝北口 -> 货架南 -> 出生点）：
+- 货架缝物理 1.6 m，膨胀后自由走廊仅 0.4 m，从「墙洞东」斜插会楔在
+  货架西北角，必须先到「缝北口 (4.0,-4.3)」对齐缝中心线再南下
+- 失败自动重试 2 次（间隔 3 s），耗尽跳过该点继续下一环，不卡死
+- 状态发布在 /patrol/status（轻量 JSON），可接前端
+- 运行：ros2 run quadruped_sim patrol_node
+
+## 巡逻验收与"站在致命格上"问题（历史）
 
 4 航点巡逻（北走廊 -> 墙洞东 -> 货架南 -> 出生点）实测：
 - 单程逐段全部可达；但**连续巡逻**时，目标 3/4 偶发

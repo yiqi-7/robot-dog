@@ -136,8 +136,10 @@ local_costmap:
           obstacle_min_range: 0.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
+        # 必须大于 robot_radius(0.35)：0.35~0.60 之间是渐变软代价，
+        # 机器人贴墙停稳时脚下格不再是致命 254，规划器才能起飞
         cost_scaling_factor: 3.0
-        inflation_radius: 0.35
+        inflation_radius: 0.60
       always_send_full_costmap: true
 
 global_costmap:
@@ -180,8 +182,10 @@ global_costmap:
           obstacle_min_range: 0.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
+        # 必须大于 robot_radius(0.35)：0.35~0.60 之间是渐变软代价，
+        # 机器人贴墙停稳时脚下格不再是致命 254，规划器才能起飞
         cost_scaling_factor: 3.0
-        inflation_radius: 0.35
+        inflation_radius: 0.60
       always_send_full_costmap: true
 
 map_server:
@@ -197,9 +201,10 @@ planner_server:
       plugin: "nav2_navfn_planner::NavfnPlanner"
       tolerance: 0.5
       use_astar: false
-      # 静态地图里大片未探索区(未知)，allow_unknown=true 时规划器把未知
-      # 当可通行，出现"穿墙"路径；false 后只在已探索区域规划
-      allow_unknown: false
+      # 与老师示例配置一致取 true：静态地图已完整建好，未知区只在地图
+      # 边缘；取 false 会让机器人从"代价被膨胀成致命"的起点直接放弃规划
+      # (error 208)，反而不如允许穿过未探索边缘稳妥
+      allow_unknown: true
 
 smoother_server:
   ros__parameters:

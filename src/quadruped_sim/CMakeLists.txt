@@ -51,8 +51,13 @@ target_link_libraries(camera_info_pub
 # 依赖 libmosquitto-dev（C 客户端）+ nlohmann-json（组 JSON）
 # ---------------------------------------------------------------------------
 add_executable(champ_joint_relay src/champ_joint_relay.cpp)
+# 巡逻节点：航点环线 + 208 可重试 + 状态播报（见 NAV2-GUIDE.md）
+add_executable(patrol_node src/patrol_node.cpp)
 target_link_libraries(champ_joint_relay rclcpp::rclcpp sensor_msgs::sensor_msgs std_msgs::std_msgs)
-set(BUILT_TARGETS champ_joint_relay gait_controller odom_pub camera_info_pub)
+# 巡逻节点依赖 action 客户端与 nav2_msgs（rclcpp_action 随 rclcpp 头引入）
+find_package(nav2_msgs REQUIRED)
+target_link_libraries(patrol_node rclcpp::rclcpp rclcpp_action::rclcpp_action nav2_msgs::nav2_msgs std_msgs::std_msgs)
+set(BUILT_TARGETS champ_joint_relay patrol_node gait_controller odom_pub camera_info_pub)
 
 # ---------------------------------------------------------------------------
 # gz_window_minimize：把 Gazebo GUI 窗口最小化到任务栏
