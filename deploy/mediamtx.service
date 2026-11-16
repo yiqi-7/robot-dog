@@ -1,0 +1,11 @@
+[Unit]
+Description=MediaMTX streaming server (RTSP in, WebRTC out)
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/mediamtx /etc/mediamtx/mediamtx.yml
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

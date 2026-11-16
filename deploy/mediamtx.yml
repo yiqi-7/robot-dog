@@ -1,0 +1,24 @@
+api: no
+apiAddress: 127.0.0.1:9997
+metrics: no
+metricsAddress: 127.0.0.1:9998
+pprof: no
+pprofAddress: 127.0.0.1:9999
+playback: no
+playbackAddress: 127.0.0.1:9996
+hls: no
+rtsp: yes
+rtspAddress: :8554
+rtmp: no
+srt: no
+webrtc: yes
+webrtcAddress: :8889
+webrtcAdditionalHosts: [43.172.91.67]
+authInternalUsers:
+  - user: any
+    ips: [ ]
+    permissions:
+      - action: publish
+      - action: read
+paths:
+  cam/robot-01:
