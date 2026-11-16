@@ -239,10 +239,10 @@
   </xacro:macro>
 
   <xacro:macro name="leg_ctrls" params="prefix">
-    <xacro:joint_pos_ctrl joint="${prefix}_abduction_joint" topic="/quadruped/${prefix}_abduction/cmd_pos" p="50" d="3.5"/>
-    <xacro:joint_pos_ctrl joint="${prefix}_hip_joint"       topic="/quadruped/${prefix}_hip/cmd_pos"       p="50" d="3.0"/>
+    <xacro:joint_pos_ctrl joint="${prefix}_abduction_joint" topic="/quadruped/${prefix}_abduction/cmd_pos" p="120" d="6.0"/>
+    <xacro:joint_pos_ctrl joint="${prefix}_hip_joint"       topic="/quadruped/${prefix}_hip/cmd_pos"       p="120" d="6.0"/>
     <!-- 弯折站立姿态下膝关节需要撑住更大的支撑力矩，增益比直腿方案更高 -->
-    <xacro:joint_pos_ctrl joint="${prefix}_knee_joint"      topic="/quadruped/${prefix}_knee/cmd_pos"      p="60" d="3.5"/>
+    <xacro:joint_pos_ctrl joint="${prefix}_knee_joint"      topic="/quadruped/${prefix}_knee/cmd_pos"      p="150" d="7.0"/>
   </xacro:macro>
 
   <xacro:leg_ctrls prefix="fl"/>

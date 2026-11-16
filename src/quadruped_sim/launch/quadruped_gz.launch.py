@@ -11,16 +11,18 @@
 用法:
   ros2 launch quadruped_sim quadruped_gz.launch.py
   ros2 launch quadruped_sim quadruped_gz.launch.py gui:=false     # 无 Gazebo 界面
+  ros2 launch quadruped_sim quadruped_gz.launch.py gz_minimized:=false  # 窗口不最小化
   ros2 launch quadruped_sim quadruped_gz.launch.py teleop:=false  # 不启动键盘遥控
   ros2 launch quadruped_sim quadruped_gz.launch.py rviz:=false nav:=false  # 只跑仿真
 """
 
 import os
 
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import get_package_prefix, get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    ExecuteProcess,
     IncludeLaunchDescription,
     OpaqueFunction,
     TimerAction,
@@ -49,6 +51,24 @@ def launch_setup(context, *args, **kwargs):
     rviz_on = LaunchConfiguration("rviz").perform(context)
     nav_on = LaunchConfiguration("nav").perform(context)
     gait_on = LaunchConfiguration("gait").perform(context)
+    gz_minimized = LaunchConfiguration("gz_minimized").perform(context)
+
+    # 把 Gazebo 窗口收进任务栏：启动后调用本包的小工具发送最小化请求，
+    # 用户点任务栏图标才展开，不点就一直不打扰桌面。
+    gz_minimize_action = None
+    if gui == "true" and gz_minimized == "true":
+        gz_minimize_action = ExecuteProcess(
+            cmd=[
+                os.path.join(
+                    get_package_prefix("quadruped_sim"),
+                    "lib", "quadruped_sim", "gz_window_minimize",
+                ),
+                "Gazebo Sim",
+                "60",
+            ],
+            output="screen",
+            additional_env={"DISPLAY": os.environ.get("DISPLAY", ":0")},
+        )
 
     # ---------- 1. 展开 xacro ----------
     robot_description = ParameterValue(
@@ -248,7 +268,7 @@ def launch_setup(context, *args, **kwargs):
         condition=IfCondition(teleop),
     )
 
-    return [
+    actions = [
         robot_state_publisher,
         gz_sim,
         TimerAction(period=3.0, actions=[spawn]),
@@ -257,6 +277,10 @@ def launch_setup(context, *args, **kwargs):
         rviz_node,
         teleop_node,
     ]
+    if gz_minimize_action is not None:
+        # 等 5 秒让 Gazebo 窗口真正创建出来，再请求最小化
+        actions.append(TimerAction(period=5.0, actions=[gz_minimize_action]))
+    return actions
 
 
 def generate_launch_description():
@@ -277,6 +301,11 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "gait", default_value="true", description="是否启动 trot 步态控制"
+            ),
+            DeclareLaunchArgument(
+                "gz_minimized",
+                default_value="true",
+                description="Gazebo 窗口启动后直接最小化到任务栏（不弹到前台）",
             ),
             OpaqueFunction(function=launch_setup),
         ]
