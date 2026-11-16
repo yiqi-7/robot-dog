@@ -13,6 +13,7 @@
   ros2 launch quadruped_sim quadruped_gz.launch.py gui:=false     # 无 Gazebo 界面
   ros2 launch quadruped_sim quadruped_gz.launch.py gz_minimized:=false  # 窗口不最小化
   ros2 launch quadruped_sim quadruped_gz.launch.py gait:=champ   # 用 CHAMP 步态控制
+  ros2 launch quadruped_sim quadruped_gz.launch.py map:=/path/to/map.yaml  # 用已有地图定位（不建图）
   ros2 launch quadruped_sim quadruped_gz.launch.py teleop:=false  # 不启动键盘遥控
   ros2 launch quadruped_sim quadruped_gz.launch.py rviz:=false nav:=false  # 只跑仿真
 """
@@ -51,6 +52,8 @@ def launch_setup(context, *args, **kwargs):
     teleop = LaunchConfiguration("teleop").perform(context)
     rviz_on = LaunchConfiguration("rviz").perform(context)
     nav_on = LaunchConfiguration("nav").perform(context)
+    # map 为空 -> 在线 SLAM 建图；给 yaml 路径 -> 用已有地图 + AMCL 定位
+    map_yaml = LaunchConfiguration("map").perform(context)
     # gait 取值：trot（本项目自研 trot 步态）/ champ（CHAMP 通用步态控制器）/ none
     # 兼容旧写法：true -> trot，false -> none
     gait_mode = LaunchConfiguration("gait").perform(context).strip().lower()
@@ -215,6 +218,7 @@ def launch_setup(context, *args, **kwargs):
     )
 
     # ---------- 6. Nav2（slam_toolbox 在线建图 + 导航） ----------
+    # 模式 A：无地图 -> slam_toolbox 在线建图
     slam = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
@@ -226,6 +230,41 @@ def launch_setup(context, *args, **kwargs):
             "params_file": nav2_params,
             "use_sim_time": "true" if use_sim_time else "false",
         }.items(),
+        condition=IfCondition(nav_on),
+    )
+
+    # 模式 B：给了地图 -> map_server + AMCL 定位（地图固定，规划更稳定）
+    localization = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                get_package_share_directory("nav2_bringup"),
+                "launch", "localization_launch.py",
+            )
+        ),
+        launch_arguments={
+            "map": map_yaml,
+            "params_file": nav2_params,
+            "use_sim_time": "true" if use_sim_time else "false",
+        }.items(),
+        condition=IfCondition(nav_on),
+    )
+
+    # Lyrical 版 localization_launch.py 只负责起 map_server / amcl 两个
+    # 生命周期节点，不带生命周期管理器，必须自己补一个把它们配置并激活，
+    # 否则 amcl 不发布 map -> odom，planner_server 会一直等到超时
+    loc_lifecycle_manager = Node(
+        package="nav2_lifecycle_manager",
+        executable="lifecycle_manager",
+        name="lifecycle_manager_localization",
+        output="screen",
+        parameters=[
+            {
+                "use_sim_time": use_sim_time,
+                "autostart": True,
+                "node_names": ["map_server", "amcl"],
+                "bond_timeout": 20.0,
+            }
+        ],
         condition=IfCondition(nav_on),
     )
 
@@ -307,7 +346,10 @@ def launch_setup(context, *args, **kwargs):
         # SLAM 先起：它要初始化 Ceres 求解器并发布 map->odom，
         # planner_server 的 global_costmap 激活时必须要这条变换，否则
         # 会一直等到 100 s 超时后放弃，整个 Nav2 bringup 中止
-        TimerAction(period=6.0, actions=[slam]),
+        TimerAction(
+            period=6.0,
+            actions=[localization, loc_lifecycle_manager] if map_yaml else [slam],
+        ),
         # Nav2 放到 20 秒：等 SLAM 把 map->odom 建起来，且 gz/桥接稳定
         TimerAction(period=20.0, actions=[navigation, nav_lifecycle_manager]),
         rviz_node,
@@ -339,6 +381,11 @@ def generate_launch_description():
                 "gait",
                 default_value="trot",
                 description="步态控制器：trot(自研) / champ(通用) / none(不启动)",
+            ),
+            DeclareLaunchArgument(
+                "map",
+                default_value="",
+                description="地图 yaml 路径；留空则用 SLAM 在线建图",
             ),
             DeclareLaunchArgument(
                 "gz_minimized",

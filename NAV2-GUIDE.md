@@ -62,6 +62,19 @@ behavior_server  ──┼─> /cmd_vel_nav (Twist)
 | `robot_radius` | 0.30 | 实际足端外接圆半径（原 0.4 过保守） |
 | `inflation_radius` | 0.45 | 原 0.6 使 0.95 m 宽的门洞两侧膨胀后完全堵死 |
 
+## 静态地图模式（推荐用于正式导航）
+
+```bash
+ros2 launch quadruped_sim quadruped_gz.launch.py gait:=champ nav:=true \
+  map:=/run/media/wby/shuju/Document/robot-dog/maps/factory_latest.yaml
+```
+
+- `map` 留空 -> slam_toolbox 在线建图（首次建图用）
+- `map` 给 yaml -> map_server + AMCL 定位（地图固定，规划稳定）
+- Lyrical 版 localization_launch.py 不带生命周期管理器，launch 里
+  已自行补了 lifecycle_manager_localization（管理 map_server + amcl）
+- AMCL 按差速模型配置，出生点 (0,-5.6) yaw 1.5708 由 initial_pose 给定
+
 ## 已知问题
 
 1. **贴墙局部最小值**：机器人贴到墙面上后 DWB 可能出不来，报
@@ -70,7 +83,15 @@ behavior_server  ──┼─> /cmd_vel_nav (Twist)
 2. **在线 SLAM 地图质量**：边建图边导航时，地图未覆盖到的区域会被当作
    可通行，规划器可能给出穿墙路径。跑一段距离后地图变好，规划也变稳。
    已保存 `maps/factory_latest.{pgm,yaml}`，后续可改用静态地图。
-3. **残留节点抢资源**：TITAN V 上曾堆积 53 个上轮遗留的 Nav2 节点，
+3. **collision_monitor 的 polygon_stop 已停用**：激光 0.5~0.6 m 处的
+   墙体回波经 TF 变换后落入 stop 多边形，触发后 collision_monitor
+   不再转发任何指令（连零值都不发），整条速度链断流。
+   已用 polygon_stop.enabled: false 停用，避障由 costmap 障碍层承担。
+4. **货架间 1.0 m 窄缝无法穿越**：wh_shelf_s0 与 wh_shelf_s1 之间
+   x∈[3.3,4.3] 的缝，物理上机器人（约 0.5 m 宽）能过，但 DWB 以
+   0.5 rad/s 的转向能力跟不住这么紧的路径，会在缝口 (3.3,-4.7)
+   徘徊。目标在货架南侧时请走西/东两侧绕行，或等待调优 DWB。
+5. **残留节点抢资源**：TITAN V 上曾堆积 53 个上轮遗留的 Nav2 节点，
    导致 DDS 发现变慢、bond 与 change_state 服务超时。
    启动前建议清理：
    ```bash

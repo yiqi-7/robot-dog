@@ -4,6 +4,43 @@
 amcl:
   ros__parameters:
     use_sim_time: true
+    # 四足只能前后走 + 转向，按差速模型做粒子滤波定位
+    robot_model_type: "nav2_amcl::DifferentialMotionModel"
+    # 里程计噪声：gz 的 WORLD 真值里程计很准，可以取小一些
+    alpha1: 0.1
+    alpha2: 0.1
+    alpha3: 0.2
+    alpha4: 0.05
+    alpha5: 0.1
+    base_frame_id: "base_link"
+    global_frame_id: "map"
+    odom_frame_id: "odom"
+    scan_topic: scan
+    # 激光：360 度雷达，量程 0.12~8 m
+    laser_model_type: "likelihood_field"
+    laser_max_range: 8.0
+    laser_min_range: 0.12
+    laser_likelihood_max_dist: 2.0
+    max_beams: 90
+    # 粒子数与更新门限
+    max_particles: 3000
+    min_particles: 500
+    pf_err: 0.05
+    pf_z: 0.99
+    update_min_d: 0.10
+    update_min_a: 0.10
+    resample_interval: 1
+    recovery_alpha_fast: 0.0
+    recovery_alpha_slow: 0.0
+    # 由 launch 传入初始位姿；仿真里出生点已知，直接给
+    set_initial_pose: true
+    always_reset_initial_pose: false
+    initial_pose:
+      x: 0.0
+      y: -5.6
+      z: 0.0
+      yaw: 1.5708
+    transform_tolerance: 1.0
 
 bt_navigator:
   ros__parameters:
@@ -81,7 +118,7 @@ local_costmap:
       width: 6
       height: 6
       resolution: 0.05
-      robot_radius: 0.30
+      robot_radius: 0.35
       plugins: ["obstacle_layer", "inflation_layer"]
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
@@ -100,7 +137,7 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
-        inflation_radius: 0.45
+        inflation_radius: 0.35
       always_send_full_costmap: true
 
 global_costmap:
@@ -111,7 +148,7 @@ global_costmap:
       publish_frequency: 1.0
       global_frame: map
       robot_base_frame: base_link
-      robot_radius: 0.30
+      robot_radius: 0.35
       resolution: 0.05
       track_unknown_space: true
       rolling_window: false
@@ -137,7 +174,7 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
-        inflation_radius: 0.45
+        inflation_radius: 0.35
       always_send_full_costmap: true
 
 map_server:
@@ -225,9 +262,14 @@ collision_monitor:
       max_obstacle_height: 1.5
       obstacle_max_range: 2.5
       obstacle_min_range: 0.0
+    # 调试结论：激光 0.5~0.6 m 处的墙体回波在 TF 变换后落到多边形内，
+    # 触发 stop 后不再转发任何指令（连零值都不发），整条速度链断流。
+    # 先停用 polygon_stop（DW B 的 costmap 本身已含障碍层，避障不依赖它），
+    # 后续如需碰撞急停再用approach多边形并核对 TF
     polygons: ["polygon_stop"]
     polygon_stop:
       type: "polygon"
+      enabled: false
       action_type: "stop"
       points: "[[0.35,0.25],[0.35,-0.25],[-0.35,-0.25],[-0.35,0.25]]"
       min_points: 4
