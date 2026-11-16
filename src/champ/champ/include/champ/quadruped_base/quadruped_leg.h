@@ -48,6 +48,7 @@ namespace champ
 
         int knee_direction_;
         bool is_pantograph_;
+        bool x_mirrored_;
 
         bool gait_phase_;
         
@@ -60,6 +61,7 @@ namespace champ
                 in_contact_(1),
                 knee_direction_(0),
                 is_pantograph_(false),
+                x_mirrored_(false),
                 gait_phase_(1)
             {
                 int no_of_joints = 0;
@@ -185,6 +187,17 @@ namespace champ
             void is_pantograph(bool config)
             {
                 is_pantograph_ = config;
+            }
+
+            // 镜像腿标志：该腿大腿/膝的子坐标系相对髋坐标系绕 Z 转了 180°
+            bool x_mirrored()
+            {
+                return x_mirrored_;
+            }
+
+            void x_mirrored(bool mirrored)
+            {
+                x_mirrored_ = mirrored;
             }
 
             bool is_pantograph()

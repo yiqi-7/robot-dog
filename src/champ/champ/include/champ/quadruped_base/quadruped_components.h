@@ -164,7 +164,8 @@ namespace champ
                 swing_height(0.0f),
                 stance_depth(0.0f),
                 stance_duration(0.0f),
-                nominal_height(0.0f)
+                nominal_height(0.0f),
+                x_mirrored_hind(false)
             {}
             GaitConfig(const char * knee_or,
                 bool panto_leg,
@@ -187,7 +188,8 @@ namespace champ
                     swing_height(swing_h),
                     stance_depth(stan_dep),
                     stance_duration(stan_dur),
-                    nominal_height(nom_height)
+                    nominal_height(nom_height),
+                    x_mirrored_hind(false)
             {}
             const char * knee_orientation;
             bool pantograph_leg;
@@ -200,6 +202,10 @@ namespace champ
             float stance_depth;
             float stance_duration;
             float nominal_height;
+            // 后腿是否为镜像安装（URDF 中髋俯仰关节 origin 带 rpy="0 0 pi"）。
+            // champ 的 getPose 只累加位移、忽略旋转，逆解对四条腿用同一套 x 方向
+            // 约定；镜像腿的物理 x 轴是反的，必须显式告知，否则足端朝反方向迈。
+            bool x_mirrored_hind;
     };
 }
 

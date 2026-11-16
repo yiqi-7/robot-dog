@@ -217,8 +217,8 @@
   <!-- 四条腿：fl 左前 / fr 右前 / rl 左后 / rr 右后（后腿 mirror=1 镜像安装） -->
   <xacro:leg prefix="fl" sx="1"  sy="1"  mirror="0"/>
   <xacro:leg prefix="fr" sx="1"  sy="-1" mirror="0"/>
-  <xacro:leg prefix="rl" sx="-1" sy="1"  mirror="0"/>
-  <xacro:leg prefix="rr" sx="-1" sy="-1" mirror="0"/>
+  <xacro:leg prefix="rl" sx="-1" sy="1"  mirror="1"/>
+  <xacro:leg prefix="rr" sx="-1" sy="-1" mirror="1"/>
 
   <!-- ==================== Gazebo 关节位置控制器 ==================== -->
   <xacro:macro name="joint_pos_ctrl" params="joint topic p d">
@@ -261,10 +261,14 @@
   <gazebo>
     <plugin filename="gz-sim-odometry-publisher-system"
             name="gz::sim::systems::OdometryPublisher">
-      <odom_publish_frequency>20</odom_publish_frequency>
+      <odom_publish_frequency>50</odom_publish_frequency>
       <robot_base_frame>base_link</robot_base_frame>
       <odom_frame>odom</odom_frame>
       <dimensions>2</dimensions>
+      <!-- 里程计来源：默认 ENCODER 是把各关节运动积分成车体位移，
+           四足腿在空中摆动时会被算成"机器人走了很远"（实测 0.15 m 报成 4.31 m）。
+           改为 WORLD 直接取仿真里的真实位姿，作为 Nav2 的地面真值里程计。 -->
+      <odom_source>WORLD</odom_source>
     </plugin>
   </gazebo>
 

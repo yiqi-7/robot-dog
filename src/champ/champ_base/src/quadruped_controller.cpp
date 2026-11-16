@@ -57,6 +57,7 @@ QuadrupedController::QuadrupedController():
     this->get_parameter("gait.stance_depth",           gait_config_.stance_depth);
     this->get_parameter("gait.stance_duration",        gait_config_.stance_duration);
     this->get_parameter("gait.nominal_height",         gait_config_.nominal_height);
+    this->get_parameter("gait.x_mirrored_hind",        gait_config_.x_mirrored_hind);
     this->get_parameter("gait.knee_orientation",       knee_orientation);
     this->get_parameter("publish_foot_contacts",       publish_foot_contacts_);
     this->get_parameter("publish_joint_states",        publish_joint_states_);

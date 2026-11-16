@@ -124,6 +124,8 @@ namespace champ
                     }
                     legs[i]->is_pantograph(gait_config.pantograph_leg);
                     legs[i]->knee_direction(dir);
+                    // 前两条腿(lf,rf)非镜像，后两条腿(lh,rh)按参数决定
+                    legs[i]->x_mirrored(i >= 2 ? gait_config.x_mirrored_hind : false);
 
                     legs[i]->setGaitConfig(&gait_config);
                 }

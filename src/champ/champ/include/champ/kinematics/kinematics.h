@@ -75,6 +75,11 @@ namespace champ
             {
                 geometry::Transformation temp_foot_pos = foot_position;
 
+                // 镜像腿的物理 x 轴与 champ 模型 x 轴相反：先把目标点映射到模型坐标系，
+                // 算完的角度直接下发给物理关节即可（角度语义不变，只有 x 方向被镜像）
+                const float x_sign = leg.x_mirrored() ? -1.0f : 1.0f;
+                temp_foot_pos.X() = x_sign * temp_foot_pos.X();
+
                 float l0 = 0.0f;
 
                 for(unsigned int i = 1; i < 4; i++)
@@ -95,7 +100,7 @@ namespace champ
                 hip_joint = -(atanf(y / z) - ((M_PI/2) - acosf(-l0 / sqrtf(pow(y, 2) + pow(z, 2)))));
 
                 temp_foot_pos.RotateX(-hip_joint);
-                temp_foot_pos.Translate(-leg.upper_leg.x(), 0.0f, -leg.upper_leg.z());
+                temp_foot_pos.Translate(-x_sign * leg.upper_leg.x(), 0.0f, -leg.upper_leg.z());
 
                 x = temp_foot_pos.X();
                 y = temp_foot_pos.Y();
