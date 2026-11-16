@@ -53,6 +53,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 
 using json = nlohmann::json;
@@ -186,6 +187,16 @@ public:
         double load = 0.0;
         for (double v : msg->velocity) load += std::abs(v);
         joint_load_ = load;
+      });
+
+    // 巡逻节点进度：/patrol/status 的 JSON 直接透传到看板 currentTask，
+    // 让前端能看到「巡逻到第几个航点/重试中/已跳过」
+    sub_patrol_ = create_subscription<std_msgs::msg::String>(
+      "patrol/status", rclcpp::SensorDataQoS(),
+      [this](std_msgs::msg::String::SharedPtr msg) {
+        std::lock_guard<std::mutex> lk(data_mutex_);
+        patrol_status_ = msg->data;
+        task_ = "巡逻: " + patrol_status_;
       });
 
     pub_cmd_vel_ = create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 10);
@@ -608,6 +619,8 @@ private:
   bool publish_map_ = true;
 
   double nav_speed_ = 0.25, nav_tolerance_ = 0.30, nav_timeout_s_ = 120.0;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_patrol_;
+  std::string patrol_status_;
 
   struct mosquitto *mosq_ = nullptr;
 

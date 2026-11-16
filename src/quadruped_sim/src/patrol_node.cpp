@@ -101,6 +101,7 @@ private:
     active_ = true;
     RCLCPP_INFO(get_logger(), "发送航点 %zu/%zu (%s) 第 %d 次",
                 waypoint_index_ + 1, kPatrolRoute.size(), wp.name, attempt_ + 1);
+    publishStatus("going", std::string("前往 ") + wp.name);
   }
 
   void onResult(const GoalHandle::WrappedResult & result)
@@ -109,7 +110,7 @@ private:
     const auto & wp = kPatrolRoute[waypoint_index_];
     if (result.code == rclcpp_action::ResultCode::SUCCEEDED) {
       RCLCPP_INFO(get_logger(), "航点 %s 到达 ✅", wp.name);
-      publishStatus("reached", wp.name);
+      publishStatus("reached", std::string("已到达 ") + wp.name);
       waypoint_index_ = (waypoint_index_ + 1) % kPatrolRoute.size();
       attempt_ = 0;
       cooldown_ = 3;
@@ -121,11 +122,11 @@ private:
       ++attempt_;
       RCLCPP_WARN(get_logger(), "航点 %s 失败 (code=%d)，3 s 后重试 %d/2",
                   wp.name, static_cast<int>(result.code), attempt_);
-      publishStatus("retry", wp.name);
+      publishStatus("retry", std::string("重试中 ") + wp.name);
       cooldown_ = 3;
     } else {
       RCLCPP_ERROR(get_logger(), "航点 %s 重试耗尽，跳过并继续下一个", wp.name);
-      publishStatus("skipped", wp.name);
+      publishStatus("skipped", std::string("已跳过 ") + wp.name);
       waypoint_index_ = (waypoint_index_ + 1) % kPatrolRoute.size();
       attempt_ = 0;
       cooldown_ = 5;
