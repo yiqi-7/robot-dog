@@ -238,6 +238,30 @@ def launch_setup(context, *args, **kwargs):
         ],
     )
 
+    # MQTT 看板桥：遥测上报 + 接收看板派单(estop/resume/assign)
+    mqtt_bridge = Node(
+        package="quadruped_sim",
+        executable="mqtt_bridge",
+        name="mqtt_bridge",
+        output="screen",
+        parameters=[
+            {
+                "use_sim_time": use_sim_time,
+                "broker_host": "127.0.0.1",
+                "broker_port": 1883,
+            }
+        ],
+    )
+
+    # 多航点巡逻节点（航点参数可配，默认工厂环线）
+    patrol_node = Node(
+        package="quadruped_sim",
+        executable="patrol_node",
+        name="patrol_node",
+        output="screen",
+        parameters=[{"use_sim_time": use_sim_time}],
+    )
+
     # 视觉上云：JPEG 快照(MQTT) + H264 推流(RTSP，禁 B 帧)
     image_sender = Node(
         package="quadruped_sim",
@@ -379,7 +403,8 @@ def launch_setup(context, *args, **kwargs):
         robot_state_publisher,
         gz_sim,
         TimerAction(period=3.0, actions=[spawn]),
-        TimerAction(period=5.0, actions=[bridge, gait, odom, camera_info, rgb_camera_info, image_sender]),
+        TimerAction(period=5.0, actions=[bridge, gait, odom, camera_info, rgb_camera_info, image_sender, mqtt_bridge]),
+        TimerAction(period=30.0, actions=[patrol_node]),
         # CHAMP 依赖 gz 桥接（/joint_states 与 cmd_pos 都要通），放到 8 秒起
         TimerAction(period=8.0, actions=[champ_launch]),
         # SLAM 先起：它要初始化 Ceres 求解器并发布 map->odom，
