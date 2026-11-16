@@ -150,6 +150,8 @@ def launch_setup(context, *args, **kwargs):
         # 前向深度相机（8 m）：gz depth_camera 只发深度图 + 点云
         "/depth_camera@sensor_msgs/msg/Image[gz.msgs.Image",
         "/depth_camera/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked",
+        # 前向 RGB 相机（与深度相机同位姿的彩色画面，供看板/视觉）
+        "/rgb_camera@sensor_msgs/msg/Image[gz.msgs.Image",
         # 里程计：gz 的 OdometryPublisher 插件 -> nav_msgs/Odometry
         "/model/quadruped/odometry@nav_msgs/msg/Odometry[gz.msgs.Odometry",
     ]
@@ -212,6 +214,25 @@ def launch_setup(context, *args, **kwargs):
                 "height": 480,
                 "horizontal_fov": 1.2,
                 "frame_id": "depth_camera_link",
+                "rate": 15.0,
+            }
+        ],
+    )
+
+    # RGB 相机 CameraInfo（与深度相机同内参：同位姿同分辨率）
+    rgb_camera_info = Node(
+        package="quadruped_sim",
+        executable="camera_info_pub",
+        name="rgb_camera_info",
+        output="screen",
+        parameters=[
+            {
+                "use_sim_time": use_sim_time,
+                "width": 640,
+                "height": 480,
+                "horizontal_fov": 1.2,
+                "frame_id": "rgb_camera_link",
+                "topic": "rgb_camera/camera_info",
                 "rate": 15.0,
             }
         ],
@@ -340,7 +361,7 @@ def launch_setup(context, *args, **kwargs):
         robot_state_publisher,
         gz_sim,
         TimerAction(period=3.0, actions=[spawn]),
-        TimerAction(period=5.0, actions=[bridge, gait, odom, camera_info]),
+        TimerAction(period=5.0, actions=[bridge, gait, odom, camera_info, rgb_camera_info]),
         # CHAMP 依赖 gz 桥接（/joint_states 与 cmd_pos 都要通），放到 8 秒起
         TimerAction(period=8.0, actions=[champ_launch]),
         # SLAM 先起：它要初始化 Ceres 求解器并发布 map->odom，
