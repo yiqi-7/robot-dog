@@ -266,7 +266,10 @@ def launch_setup(context, *args, **kwargs):
                 "use_sim_time": use_sim_time,
                 "autostart": True,
                 "node_names": NAV_LIFECYCLE_NODES,
-                "bond_timeout": 4.0,
+                # bond 心跳超时：多个 Nav2 节点与 gz/桥接同时启动时，DDS 发现
+                # 需要几秒，4 s 会出现 "unable to be reached by bond" 导致
+                # 整个 bringup 中止，放宽到 20 s
+                "bond_timeout": 20.0,
             }
         ],
         condition=IfCondition(nav_on),
@@ -299,9 +302,14 @@ def launch_setup(context, *args, **kwargs):
         gz_sim,
         TimerAction(period=3.0, actions=[spawn]),
         TimerAction(period=5.0, actions=[bridge, gait, odom, camera_info]),
-        TimerAction(period=8.0, actions=[slam, navigation, nav_lifecycle_manager]),
         # CHAMP 依赖 gz 桥接（/joint_states 与 cmd_pos 都要通），放到 8 秒起
         TimerAction(period=8.0, actions=[champ_launch]),
+        # SLAM 先起：它要初始化 Ceres 求解器并发布 map->odom，
+        # planner_server 的 global_costmap 激活时必须要这条变换，否则
+        # 会一直等到 100 s 超时后放弃，整个 Nav2 bringup 中止
+        TimerAction(period=6.0, actions=[slam]),
+        # Nav2 放到 20 秒：等 SLAM 把 map->odom 建起来，且 gz/桥接稳定
+        TimerAction(period=20.0, actions=[navigation, nav_lifecycle_manager]),
         rviz_node,
         teleop_node,
     ]
