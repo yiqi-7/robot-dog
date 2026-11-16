@@ -27,21 +27,22 @@ struct Waypoint
 {
   double x;
   double y;
-  const char * name;
+  std::string name;   // 值语义：参数解析出的临时串必须拷贝，不能用指针
 };
 
-// 工厂巡逻环线。
-// 关键：货架缝物理宽 1.6 m，但两侧各膨胀 0.35 m（robot_radius）后，
-// 全局代价图里只剩 x=3.8~4.2 的 0.4 m 自由走廊。若直接从「墙洞东」
-// 斜插过去，机器人会楔在货架西北角（该格代价=99 致命），NavFn 拒绝
-// 从致命格起飞（error 208），BT 随后报 105 放弃。
-// 因此插入「缝北口」航点，先把机器人摆到缝中心线 x=4.0 再南下。
-static const std::vector<Waypoint> kPatrolRoute = {
-  {0.0,  -2.5, "北走廊"},
-  {2.2,  -3.2, "墙洞东"},
-  {4.0,  -4.3, "缝北口"},   // 对齐航点：货架缝中心线，避免斜插楔角
-  {2.5,  -6.5, "货架南"},
-  {0.2,  -5.4, "出生点"},
+// 航点来源：ROS 参数 waypoints（字符串数组，每项 "x,y,名称"），默认
+// 是工厂实测环线。参数化后运维不改代码就能换路线。
+// 默认路线中的「缝北口」是对齐航点：货架缝物理宽 1.6 m，但两侧各膨胀
+// 0.35 m（robot_radius）后，全局代价图里只剩 x=3.8~4.2 的 0.4 m 自由
+// 走廊。若直接从「墙洞东」斜插过去，机器人会楔在货架西北角（该格代价
+// =99 致命），NavFn 拒绝从致命格起飞（error 208），BT 随后报 105 放弃。
+// 先到缝中心线 x=4.0 摆正再南下即可。
+static const std::vector<std::string> kDefaultRoute = {
+  "0.0,-2.5,北走廊",
+  "2.2,-3.2,墙洞东",
+  "4.0,-4.3,缝北口",
+  "2.5,-6.5,货架南",
+  "0.2,-5.4,出生点",
 };
 
 class PatrolNode : public rclcpp::Node
@@ -53,11 +54,37 @@ public:
     // 参数：循环巡逻（默认 true）；单点超时倍率（默认 1.0）
     declare_parameter<bool>("loop", true);
     declare_parameter<double>("timeout_scale", 1.0);
+    // 航点列表："x,y,名称"（坐标为 map 系米制；名称用于日志与看板）
+    declare_parameter<std::vector<std::string>>(
+      "waypoints", kDefaultRoute);
+
+    const auto wp_param = get_parameter("waypoints");
+    if (wp_param.get_type() != rclcpp::ParameterType::PARAMETER_STRING_ARRAY) {
+      RCLCPP_ERROR(get_logger(), "waypoints 参数类型异常（应为字符串数组）");
+    }
+    for (const auto & item : wp_param.as_string_array()) {
+      const auto c1 = item.find(',');
+      const auto c2 = c1 == std::string::npos ? std::string::npos : item.find(',', c1 + 1);
+      if (c1 == std::string::npos || c2 == std::string::npos) {
+        RCLCPP_WARN(get_logger(), "航点格式应为 x,y,名称，忽略: %s", item.c_str());
+        continue;
+      }
+      try {
+        route_.push_back({std::stod(item.substr(0, c1)),
+                          std::stod(item.substr(c1 + 1, c2 - c1 - 1)),
+                          item.substr(c2 + 1)});
+      } catch (const std::exception &) {
+        RCLCPP_WARN(get_logger(), "航点坐标解析失败，忽略: %s", item.c_str());
+      }
+    }
+    if (route_.size() < 2) {
+      RCLCPP_ERROR(get_logger(), "有效航点不足 2 个，巡逻无意义");
+    }
+    RCLCPP_INFO(get_logger(), "巡逻节点就绪，%zu 个航点", route_.size());
 
     client_ = rclcpp_action::create_client<NavigateToPose>(this, "navigate_to_pose");
     status_pub_ = create_publisher<std_msgs::msg::String>("/patrol/status", 10);
     timer_ = create_wall_timer(500ms, std::bind(&PatrolNode::step, this));
-    RCLCPP_INFO(get_logger(), "巡逻节点就绪，%zu 个航点", kPatrolRoute.size());
   }
 
 private:
@@ -74,15 +101,15 @@ private:
   {
     // 航点间距 / 保守速度 0.06 m/s + 90 s 余量，再乘用户倍率
     const double scale = get_parameter("timeout_scale").as_double();
-    const auto & a = kPatrolRoute[waypoint_index_];
-    const auto & b = kPatrolRoute[(waypoint_index_ + 1) % kPatrolRoute.size()];
+    const auto & a = route_[waypoint_index_];
+    const auto & b = route_[(waypoint_index_ + 1) % route_.size()];
     const double dist = std::hypot(a.x - b.x, a.y - b.y);
     return (dist / 0.06 + 90.0) * scale;
   }
 
   void sendGoal()
   {
-    const auto & wp = kPatrolRoute[waypoint_index_];
+    const auto & wp = route_[waypoint_index_];
     NavigateToPose::Goal goal;
     goal.pose.header.frame_id = "map";
     goal.pose.header.stamp = now();
@@ -100,18 +127,25 @@ private:
     goal_timeout_ = waypointTimeout();
     active_ = true;
     RCLCPP_INFO(get_logger(), "发送航点 %zu/%zu (%s) 第 %d 次",
-                waypoint_index_ + 1, kPatrolRoute.size(), wp.name, attempt_ + 1);
+                waypoint_index_ + 1, route_.size(), wp.name.c_str(), attempt_ + 1);
     publishStatus("going", std::string("前往 ") + wp.name);
   }
 
   void onResult(const GoalHandle::WrappedResult & result)
   {
     active_ = false;
-    const auto & wp = kPatrolRoute[waypoint_index_];
+    const auto & wp = route_[waypoint_index_];
     if (result.code == rclcpp_action::ResultCode::SUCCEEDED) {
-      RCLCPP_INFO(get_logger(), "航点 %s 到达 ✅", wp.name);
+      RCLCPP_INFO(get_logger(), "航点 %s 到达 ✅", wp.name.c_str());
       publishStatus("reached", std::string("已到达 ") + wp.name);
-      waypoint_index_ = (waypoint_index_ + 1) % kPatrolRoute.size();
+      waypoint_index_ = (waypoint_index_ + 1) % route_.size();
+      // 单次模式（loop:=false）：走完最后一个航点即收工
+      if (!get_parameter("loop").as_bool() && waypoint_index_ == 0) {
+        RCLCPP_INFO(get_logger(), "路线走完，单次模式结束");
+        publishStatus("done", "巡逻完成");
+        timer_->cancel();
+        return;
+      }
       attempt_ = 0;
       cooldown_ = 3;
       return;
@@ -121,13 +155,13 @@ private:
     if (attempt_ < 2) {
       ++attempt_;
       RCLCPP_WARN(get_logger(), "航点 %s 失败 (code=%d)，3 s 后重试 %d/2",
-                  wp.name, static_cast<int>(result.code), attempt_);
+                  wp.name.c_str(), static_cast<int>(result.code), attempt_);
       publishStatus("retry", std::string("重试中 ") + wp.name);
       cooldown_ = 3;
     } else {
-      RCLCPP_ERROR(get_logger(), "航点 %s 重试耗尽，跳过并继续下一个", wp.name);
+      RCLCPP_ERROR(get_logger(), "航点 %s 重试耗尽，跳过并继续下一个", wp.name.c_str());
       publishStatus("skipped", std::string("已跳过 ") + wp.name);
-      waypoint_index_ = (waypoint_index_ + 1) % kPatrolRoute.size();
+      waypoint_index_ = (waypoint_index_ + 1) % route_.size();
       attempt_ = 0;
       cooldown_ = 5;
     }
@@ -157,6 +191,7 @@ private:
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
   std::shared_ptr<GoalHandle> goal_handle_;
+  std::vector<Waypoint> route_;
   size_t waypoint_index_;
   int attempt_;
   int cooldown_ = 0;

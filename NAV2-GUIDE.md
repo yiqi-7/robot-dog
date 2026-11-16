@@ -131,6 +131,10 @@ C++ 航点环线巡逻（北走廊 -> 墙洞东 -> 缝北口 -> 货架南 -> 出
 - 失败自动重试 2 次（间隔 3 s），耗尽跳过该点继续下一环，不卡死
 - 状态发布在 /patrol/status（轻量 JSON），可接前端
 - 运行：ros2 run quadruped_sim patrol_node
+- 航点可配置（参数 "x,y,名称" 字符串数组，坐标为 map 系米制）：
+  ros2 run quadruped_sim patrol_node --ros-args \
+    -p "waypoints:=[\"0.0,-2.5,点A\",\"2.2,-3.2,点B\"]" -p loop:=false
+- loop:=false 单次模式：走完一轮即停；默认 true 循环巡逻
 
 ## 巡逻验收与"站在致命格上"问题（历史）
 
