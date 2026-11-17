@@ -257,7 +257,7 @@ def launch_setup(context, *args, **kwargs):
     # patrol:=false 时不启动巡逻（补扫/单点导航/语音测试用，否则 30 s 后
     # 它会自己把机器人开走，毁掉定位对齐）
     patrol_node = Node(
-        package="quadruped_sim",
+        package="quadruped_explorer",
         executable="patrol_node",
         name="patrol_node",
         output="screen",

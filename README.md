@@ -10,6 +10,8 @@
 | 目录 | 内容 |
 |---|---|
 | `src/quadruped_sim/` | ROS 2 仿真功能包：机器狗模型、C++ 步态、传感器、SLAM/Nav2 |
+| `src/quadruped_mqtt_bridge/` | 上云桥接：MQTT 状态/任务/语音（§3.1 上行 + piper 播报）、视觉快照、麦克风采集（真机也要装） |
+| `src/quadruped_explorer/` | 自主导航：航点巡逻、卡死重试（不依赖 Gazebo，真机也要装） |
 | `quadruped-ops/` | 厂区监控运维看板（局域网 MQTT 队管系统） |
 
 两层通过 **MQTT** 通信：机器狗上报遥测、接收任务；看板负责可视化与派单。
@@ -25,7 +27,9 @@ robot-dog/
 ├── src/                      # ROS 2 工作区源码
 │   ├── champ/                # CHAMP 通用四足步态控制器（vendored 上游，含本项目适配补丁）
 │   ├── quadruped_champ_config/  # CHAMP 适配本机器狗的配置包（yaml / launch）
-│   └── quadruped_sim/        # 四足机器狗仿真功能包
+│   ├── quadruped_sim/        # 四足机器狗仿真功能包（模型/步态/传感器/Nav2 参数）
+│   ├── quadruped_mqtt_bridge/ # 上云桥接（MQTT/语音/视觉快照，真机也要装）
+│   └── quadruped_explorer/   # 自主导航（航点巡逻，真机也要装）
 │       ├── src/              # C++ 节点源码
 │       │   ├── gait_controller.cpp   # 步态控制器（核心）
 │       │   ├── odom_pub.cpp          # 里程计 TF 广播
@@ -77,7 +81,7 @@ sudo apt install ros-lyrical-desktop ros-lyrical-ros-gz ros-lyrical-navigation2 
 ```bash
 cd ~/robot-dog
 source /opt/ros/lyrical/setup.bash
-colcon build --symlink-install --packages-select quadruped_sim
+colcon build --symlink-install --packages-select quadruped_sim quadruped_mqtt_bridge quadruped_explorer
 source install/setup.bash
 ```
 
