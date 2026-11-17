@@ -164,8 +164,97 @@ node test-voice.mjs "让哨兵去充电" "QB-01 去货架区北排巡检"
 node voice-gateway.js
 # 环境变量：MQTT_URL / TOPIC_PREFIX / OLLAMA_URL / VOICE_MODEL / ASR_MODEL_DIR / PENDING_TTL_MS
 #           VOICE_CLIP_DIR（语音片段目录，默认 ./voice-clips）/ VOICE_CLIP_KEEP（保留条数，默认 100）
+#           LLM_BACKEND（ollama|openai，默认 ollama）/ OPENAI_BASE_URL（openai 后端时必填）
 ```
 
 - ASR：`models/sensevoice/` 下放 `model.int8.onnx` + `tokens.txt`（sherpa-onnx SenseVoice 中英日韩粤模型）
 - LLM：本地 Ollama，默认 `qwen2.5:1.5b`（CPU 可流畅运行）；GPU 正常时可 `set VOICE_MODEL=qwen2.5:3b` 提升解析质量。网关启动时自检并预热，缺失自动降级规则解析
 - `start.bat` 已集成：Broker + 语音网关 + 看板三进程一键启动
+
+---
+
+## 9. 机器人端语音实现（本仓库仿真机）
+
+机器人侧由两个节点完成，契约严格对齐 §3.1 / §3.2：
+
+### 9.1 采集上行：`quadruped_sim/voice_source`
+
+把麦克风/WAV 切成一段段语音，发 ROS 话题 `voice/audio_pcm`（`UInt8MultiArray`），
+由 `mqtt_bridge` 按 §3.1 组装 JSON 上行（base64 裸 PCM，不含 WAV 头；
+采样率/声道通过 latched 的 `voice/audio_info` 同步）。
+
+```bash
+# 自动分段（能量 VAD，静音 900ms 收尾）
+ros2 run quadruped_sim voice_source --ros-args -p mode:=vad -p thresh:=0.02
+
+# 用 WAV 样本代替麦克风（无麦克风环境，本机即此模式）
+ros2 run quadruped_sim voice_source --ros-args \
+  -p mode:=file -p wav_path:=/home/wby/voice-clips/cmd_inspection.wav -p loop:=false
+```
+
+| 参数 | 默认 | 说明 |
+| --- | --- | --- |
+| `mode` | `vad` | `vad` 麦克风自动分段 / `file` 重发 WAV |
+| `device` | 空（默认声卡） | `arecord -D` 设备名 |
+| `sample_rate` / `channels` | 16000 / 1 | 上行采样率 |
+| `thresh` | 0.02 | 能量 VAD 阈值（归一化 RMS） |
+| `silence_ms` / `min_ms` / `max_ms` | 900 / 700 / 8000 | 静音收尾 / 最短 / 最长片段 |
+| `preroll_ms` | 240 | 说话前的预热缓冲，防首字被切 |
+| `loop` / `gap_s` | false / 6.0 | file 模式循环重发 |
+
+触发方式（两者共用一套状态机）：
+
+```bash
+ros2 service call /voice/capture std_srvs/srv/Trigger "{}"   # 重发当前音频
+ros2 topic pub -1 /voice/ptt std_msgs/msg/Bool "{data: true}"   # 课程 ptt.sh：开始
+ros2 topic pub -1 /voice/ptt std_msgs/msg/Bool "{data: false}"  # 手动收尾并上传
+```
+
+注意：节点发布前会等待 `voice/audio_pcm` 的订阅者匹配（最多 10s）。DDS 发现未完成时
+直接发布，第一段语音会被静默丢弃——这是实测踩过的坑。
+
+### 9.2 TTS 播报：`quadruped_sim/mqtt_bridge`
+
+收到 `{P}/robots/{id}/tts` 后：转发 ROS 话题 `voice/tts_text`（供看板/日志），
+同时入播报队列，用 piper 合成中文语音再 `aplay` 播放（队列串行，连发不互相打断）：
+
+```bash
+piper_bin   := ~/venvs/piper/bin/piper
+piper_model := quadruped-ops/models/piper/zh_CN-huayan-medium.onnx
+```
+
+模型获取：`pip install piper-tts`（venv）+ 从课程教师包拷贝 `zh_CN-huayan-medium.onnx`
+与 `.onnx.json` 到 `quadruped-ops/models/piper/`（63MB 不入库；setup_env.sh 里的
+modelscope 地址现已 404）。piper 不可用时只打 WARN，不影响语音上行与任务链路。
+
+实测（本机）：合成 2.3~2.7s wav 正常，播放走 HDMI 声卡（`aplay -l` 只有 HDMI 输出，
+无模拟音箱，听到声音需接显示器音响或改 `device` 参数）。
+
+### 8.1 没有 Ollama 时：OpenAI 兼容后端（本机 TITAN V 采用）
+
+ollama.com 与 GitHub release 在本机网络不可达，改用 llama.cpp 的 OpenAI 兼容服务：
+
+```bash
+python3 -m venv ~/llm-venv && ~/llm-venv/bin/pip install "llama-cpp-python[server]"
+# GGUF 从 hf-mirror 下载（实测 ~75KB/s，469MB 约 1 小时）
+# https://hf-mirror.com/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
+~/llm-venv/bin/python -m llama_cpp.server \
+  --model ~/models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
+  --host 127.0.0.1 --port 8081 --n_ctx 4096 --n_threads 6 --chat_format chatml
+
+LLM_BACKEND=openai OPENAI_BASE_URL=http://127.0.0.1:8081/v1 VOICE_MODEL=qwen2.5-0.5b \
+  node voice-gateway.js
+```
+
+实测（TITAN V，CPU 推理，0.5B q4_k_m）：预热 0.1~2s，单条解析 1~3s，输出为合规 JSON。
+0.5B 级模型三类系统性偏差，网关双路合并已兜住（见 §4 的 `engine` 字段说明）：
+
+| 偏差 | 实测表现 | 兜底 |
+| --- | --- | --- |
+| 照抄 prompt 示例 | 输出示例里的旧点位 id（`pt-shelf-n`），地图里不存在 | 合并时校验 target ∈ `siteMap.points`，假 id 丢弃后用规则路补 |
+| 时间量词算错 | "五分钟后" 算成 +30 秒 | `scheduledAt` 与规则值偏差 >5 分钟时取规则值 |
+| 漏项 | 漏 `target` / `robot` | 规则路补齐 |
+| 急停漏识别 | — | 规则命中急停而无视 LLM 结果，直接以规则为准（安全优先） |
+
+中文时间词（一分钟/两分钟/半小时/三点半/十五分钟）由规则路 `cnNum` 负责，
+`node test_rules.mjs` 是离线回归（12 例，当前 12/12 通过）。
