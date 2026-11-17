@@ -44,13 +44,7 @@ target_link_libraries(camera_info_pub
   rclcpp::rclcpp
   sensor_msgs::sensor_msgs)
 
-# ---------------------------------------------------------------------------
-# champ_joint_relay：CHAMP 关节桥（gz 关节指令 ↔ champ 内部格式）
-# ---------------------------------------------------------------------------
-add_executable(champ_joint_relay src/champ_joint_relay.cpp)
-target_link_libraries(champ_joint_relay rclcpp::rclcpp sensor_msgs::sensor_msgs std_msgs::std_msgs)
-
-set(BUILT_TARGETS champ_joint_relay gait_controller odom_pub camera_info_pub)
+set(BUILT_TARGETS gait_controller odom_pub camera_info_pub)
 
 # ---------------------------------------------------------------------------
 # gz_window_minimize：把 Gazebo GUI 窗口最小化到任务栏

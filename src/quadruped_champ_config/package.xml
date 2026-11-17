@@ -2,12 +2,11 @@
 <package format="3">
   <name>quadruped_champ_config</name>
   <version>1.0.0</version>
-  <description>CHAMP 步态控制器针对本仓库 Go2 构型机器狗的配置与启动文件</description>
+  <description>CHAMP 步态控制器针对本仓库 Go2 构型机器狗的配置、启动与关节指令中继。不依赖仿真包：机器人模型由调用方经 urdf_path 参数提供，同一套配置可直接用于真机。</description>
   <maintainer email="wby@example.com">wby</maintainer>
   <license>Apache-2.0</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
   <exec_depend>champ_base</exec_depend>
-  <exec_depend>quadruped_sim</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
   <exec_depend>xacro</exec_depend>
   <export>

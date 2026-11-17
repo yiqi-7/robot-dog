@@ -190,6 +190,9 @@ def launch_setup(context, *args, **kwargs):
                 "launch", "champ_controller.launch.py",
             )
         ),
+        # 依赖方向：仿真包知道自己的模型在哪，把路径传给通用配置包；
+        # 配置包不反向依赖仿真包（同一套 champ 配置以后直接给真机用）。
+        launch_arguments={"urdf_path": xacro_file}.items(),
         condition=IfCondition(champ_on),
     )
 
