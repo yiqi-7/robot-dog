@@ -27,7 +27,14 @@ set(BUILT_TARGETS)
 # ---------------------------------------------------------------------------
 # mqtt_bridge：机器狗 ↔ 看板 MQTT 桥（状态上行 / 任务执行 / 语音 §3.1 上行 / TTS 播报）
 # ---------------------------------------------------------------------------
-add_executable(mqtt_bridge src/mqtt_bridge.cpp)
+add_executable(mqtt_bridge
+  src/node_core.cpp
+  src/node_mqtt.cpp
+  src/node_telemetry.cpp
+  src/node_tasks.cpp
+  src/node_voice.cpp
+  src/main.cpp)
+target_include_directories(mqtt_bridge PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(mqtt_bridge PRIVATE ${MOSQUITTO_INCLUDE_DIR})
 target_link_libraries(mqtt_bridge
   rclcpp::rclcpp
