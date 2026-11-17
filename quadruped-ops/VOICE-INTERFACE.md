@@ -171,6 +171,35 @@ node voice-gateway.js
 - LLM：本地 Ollama，默认 `qwen2.5:1.5b`（CPU 可流畅运行）；GPU 正常时可 `set VOICE_MODEL=qwen2.5:3b` 提升解析质量。网关启动时自检并预热，缺失自动降级规则解析
 - `start.bat` 已集成：Broker + 语音网关 + 看板三进程一键启动
 
+### 8.1 没有 Ollama 时：OpenAI 兼容后端（本机 TITAN V 采用）
+
+ollama.com 与 GitHub release 在本机网络不可达，改用 llama.cpp 的 OpenAI 兼容服务：
+
+```bash
+python3 -m venv ~/llm-venv && ~/llm-venv/bin/pip install "llama-cpp-python[server]"
+# GGUF 从 hf-mirror 下载（实测 ~75KB/s，469MB 约 1 小时）
+# https://hf-mirror.com/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
+~/llm-venv/bin/python -m llama_cpp.server \
+  --model ~/models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
+  --host 127.0.0.1 --port 8081 --n_ctx 4096 --n_threads 6 --chat_format chatml
+
+LLM_BACKEND=openai OPENAI_BASE_URL=http://127.0.0.1:8081/v1 VOICE_MODEL=qwen2.5-0.5b \
+  node voice-gateway.js
+```
+
+实测（TITAN V，CPU 推理，0.5B q4_k_m）：预热 0.1~2s，单条解析 1~3s，输出为合规 JSON。
+0.5B 级模型三类系统性偏差，网关双路合并已兜住（见 §4 的 `engine` 字段说明）：
+
+| 偏差 | 实测表现 | 兜底 |
+| --- | --- | --- |
+| 照抄 prompt 示例 | 输出示例里的旧点位 id（`pt-shelf-n`），地图里不存在 | 合并时校验 target ∈ `siteMap.points`，假 id 丢弃后用规则路补 |
+| 时间量词算错 | "五分钟后" 算成 +30 秒 | `scheduledAt` 与规则值偏差 >5 分钟时取规则值 |
+| 漏项 | 漏 `target` / `robot` | 规则路补齐 |
+| 急停漏识别 | — | 规则命中急停而无视 LLM 结果，直接以规则为准（安全优先） |
+
+中文时间词（一分钟/两分钟/半小时/三点半/十五分钟）由规则路 `cnNum` 负责，
+`node test_rules.mjs` 是离线回归（12 例，当前 12/12 通过）。
+
 ---
 
 ## 9. 机器人端语音实现（本仓库仿真机）
@@ -229,32 +258,3 @@ modelscope 地址现已 404）。piper 不可用时只打 WARN，不影响语音
 
 实测（本机）：合成 2.3~2.7s wav 正常，播放走 HDMI 声卡（`aplay -l` 只有 HDMI 输出，
 无模拟音箱，听到声音需接显示器音响或改 `device` 参数）。
-
-### 8.1 没有 Ollama 时：OpenAI 兼容后端（本机 TITAN V 采用）
-
-ollama.com 与 GitHub release 在本机网络不可达，改用 llama.cpp 的 OpenAI 兼容服务：
-
-```bash
-python3 -m venv ~/llm-venv && ~/llm-venv/bin/pip install "llama-cpp-python[server]"
-# GGUF 从 hf-mirror 下载（实测 ~75KB/s，469MB 约 1 小时）
-# https://hf-mirror.com/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
-~/llm-venv/bin/python -m llama_cpp.server \
-  --model ~/models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
-  --host 127.0.0.1 --port 8081 --n_ctx 4096 --n_threads 6 --chat_format chatml
-
-LLM_BACKEND=openai OPENAI_BASE_URL=http://127.0.0.1:8081/v1 VOICE_MODEL=qwen2.5-0.5b \
-  node voice-gateway.js
-```
-
-实测（TITAN V，CPU 推理，0.5B q4_k_m）：预热 0.1~2s，单条解析 1~3s，输出为合规 JSON。
-0.5B 级模型三类系统性偏差，网关双路合并已兜住（见 §4 的 `engine` 字段说明）：
-
-| 偏差 | 实测表现 | 兜底 |
-| --- | --- | --- |
-| 照抄 prompt 示例 | 输出示例里的旧点位 id（`pt-shelf-n`），地图里不存在 | 合并时校验 target ∈ `siteMap.points`，假 id 丢弃后用规则路补 |
-| 时间量词算错 | "五分钟后" 算成 +30 秒 | `scheduledAt` 与规则值偏差 >5 分钟时取规则值 |
-| 漏项 | 漏 `target` / `robot` | 规则路补齐 |
-| 急停漏识别 | — | 规则命中急停而无视 LLM 结果，直接以规则为准（安全优先） |
-
-中文时间词（一分钟/两分钟/半小时/三点半/十五分钟）由规则路 `cnNum` 负责，
-`node test_rules.mjs` 是离线回归（12 例，当前 12/12 通过）。
