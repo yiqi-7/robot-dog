@@ -87,9 +87,18 @@ find_library(MOSQUITTO_LIBRARY NAMES mosquitto)
 find_path(MOSQUITTO_INCLUDE_DIR NAMES mosquitto.h)
 find_package(nlohmann_json QUIET)
 
+# 缺库不再静默跳过：以前只打 WARNING，节点没编译、看板没数据，排查成本很高。
+# 需要纯仿真环境（不上云）时显式 -DBUILD_MQTT_BRIDGE=OFF
+option(BUILD_MQTT_BRIDGE "构建 mqtt_bridge（需 libmosquitto-dev + nlohmann-json3-dev）" ON)
+
 if(NOT MOSQUITTO_LIBRARY OR NOT MOSQUITTO_INCLUDE_DIR)
-  message(WARNING
-    "未找到 libmosquitto，跳过 mqtt_bridge。安装：sudo apt install libmosquitto-dev")
+  if(BUILD_MQTT_BRIDGE)
+    message(FATAL_ERROR
+      "缺少 libmosquitto，mqtt_bridge 无法构建。安装：sudo apt install libmosquitto-dev nlohmann-json3-dev"
+      "；纯仿真不需要上云时加 -DBUILD_MQTT_BRIDGE=OFF")
+  else()
+    message(STATUS "BUILD_MQTT_BRIDGE=OFF，跳过 mqtt_bridge")
+  endif()
 else()
   add_executable(mqtt_bridge src/mqtt_bridge.cpp)
   target_include_directories(mqtt_bridge PRIVATE ${MOSQUITTO_INCLUDE_DIR})

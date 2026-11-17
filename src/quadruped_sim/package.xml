@@ -18,6 +18,20 @@
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
 
+  <!-- C++ 侧还有这些真实编译依赖，此前漏声明（导致新机器按 package.xml
+       装环境编不过；本机没装 rosdep，所以一直没被暴露） -->
+  <depend>std_srvs</depend>
+  <depend>rclcpp_action</depend>
+  <depend>nav2_msgs</depend>
+  <build_depend>libopencv-dev</build_depend>
+  <exec_depend>libopencv-dev</exec_depend>
+  <build_depend>libx11-dev</build_depend>
+  <exec_depend>libx11-dev</exec_depend>
+  <build_depend>libmosquitto-dev</build_depend>
+  <exec_depend>libmosquitto-dev</exec_depend>
+  <build_depend>nlohmann-json-dev</build_depend>
+  <exec_depend>nlohmann-json-dev</exec_depend>
+
   <!-- 运行时依赖 -->
   <exec_depend>xacro</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
