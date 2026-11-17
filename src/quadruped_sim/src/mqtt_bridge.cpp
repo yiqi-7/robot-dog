@@ -23,8 +23,10 @@
 // 数据流
 // ---------------------------------------------------------------------------
 //   上行  /odom + /joint_states → {P}/robots/{id}/state   (1 Hz, QoS1, retained)
-//   下发  {P}/robots/{id}/cmd   → estop / resume / assign
+//   下发  {P}/robots/{id}/cmd   → estop / resume / assign / cancel
 //   地图  {P}/site/map          → 一次性 retained 发布（连接成功后）
+//   任务  {P}/fleet/tasks       → 订阅看板的全量任务快照；任务结束【回写】状态
+//   告警  {P}/event             → 电量 / 温度 / 急停 / 导航失败等事件上报
 //
 // ---------------------------------------------------------------------------
 // 心跳与掉线（3.3）
@@ -42,9 +44,12 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <mosquitto.h>
@@ -84,6 +89,17 @@ double wrapPi(double a)
 double yawFromQuat(double x, double y, double z, double w)
 {
   return std::atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z));
+}
+
+// 当前墙上时钟的毫秒时间戳（Unix epoch ms）。
+// 【不能】用 rclcpp 的 now()：本节点受 use_sim_time 控制，Gazebo 仿真时钟的
+// nanoseconds() 不是 Unix epoch，直接当毫秒用会得到 217835 这种荒唐值，
+// 看板按 updatedAt/ts 排序、显示"多久之前"就全乱了。
+// 所有 MQTT 报文里的时间戳统一用系统时钟，与看板 Date.now() 语义一致。
+long long wallClockMs()
+{
+  return std::chrono::duration_cast<std::chrono::milliseconds>(
+           std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
 // ---------------------------------------------------------------------------
@@ -146,7 +162,11 @@ public:
   MqttBridge() : rclcpp::Node("mqtt_bridge")
   {
     // ---------------- 参数 ----------------
-    broker_host_   = declare_parameter("broker_host", "192.168.137.1");
+    // 默认走本机：看板 server.js 与 mosquitto broker 都跑在同一台机器上，
+    // 两者必须连同一个 broker 才能互通。这里若写成 192.168.137.1（主机 ICS
+    // 网卡地址）而看板连 127.0.0.1，就会出现"看板派单了但机器人收不到"的
+    // 假故障，排查成本极高，故默认值统一为 127.0.0.1。
+    broker_host_   = declare_parameter("broker_host", "127.0.0.1");
     broker_port_   = declare_parameter("broker_port", 1883);
     robot_id_      = declare_parameter("robot_id", "robot-01");
     robot_name_    = declare_parameter("robot_name", "仿真狗");
@@ -171,9 +191,20 @@ public:
     nav_tolerance_ = declare_parameter("nav_tolerance", 0.30);// m，到达判定
     nav_timeout_s_ = declare_parameter("nav_timeout", 120.0); // s
 
+    // ---- 3.5 告警阈值与 alarmId 分配 ----
+    // alarmId 约定"上报方分配、全局递增"。看板 mock 模式的种子告警用 1000 附近
+    // 的小号，这里从 100 万起，避免两边撞号。
+    alarm_base_id_ = declare_parameter("alarm_base_id", 1000000);
+    battery_warn_  = declare_parameter("battery_warn", 20.0);      // % 低于即预警
+    battery_crit_  = declare_parameter("battery_crit", 10.0);      // % 低于即严重
+    temp_warn_     = declare_parameter("motor_temp_warn", 75.0);   // °C
+    temp_crit_     = declare_parameter("motor_temp_crit", 85.0);   // °C
+
     state_topic_ = topic_prefix_ + "/robots/" + robot_id_ + "/state";
     cmd_topic_   = topic_prefix_ + "/robots/" + robot_id_ + "/cmd";
     map_topic_   = topic_prefix_ + "/site/map";
+    fleet_tasks_topic_ = topic_prefix_ + "/fleet/tasks";
+    event_topic_       = topic_prefix_ + "/event";
 
     start_time_ = now();
 
@@ -195,9 +226,16 @@ public:
       "joint_states", rclcpp::SensorDataQoS(),
       [this](sensor_msgs::msg::JointState::SharedPtr msg) {
         std::lock_guard<std::mutex> lk(data_mutex_);
-        double load = 0.0;
-        for (double v : msg->velocity) load += std::abs(v);
-        joint_load_ = load;
+        // 关节负载归一化到 0~1，供温度模型使用。
+        // 【实测】CHAMP 步态正常行走时，12 个关节里有 4 个髋/膝轴会跑到
+        // ±12 rad/s 的限幅值，平均绝对角速度约 5~6 rad/s —— 这是步态控制的
+        // 正常表现，不是卡死。所以不能拿原始值直接乘以系数（会算出 130°C+），
+        // 这里除以标称值 6.0 归一化，再截断到 1.0。
+        double sum = 0.0;
+        size_t n = 0;
+        for (double v : msg->velocity) { sum += std::abs(v); ++n; }
+        const double avg = n ? sum / static_cast<double>(n) : 0.0;
+        joint_load_ = std::min(avg / 6.0, 1.0);
       });
 
     // 巡逻节点进度：/patrol/status 的 JSON 直接透传到看板 currentTask，
@@ -243,11 +281,14 @@ public:
       "  机器人     : %s (%s)\n"
       "  状态主题   : %s @ %.1f Hz\n"
       "  指令主题   : %s\n"
+      "  任务主题   : %s（订阅 + 回写）\n"
+      "  告警主题   : %s\n"
       "  地图主题   : %s（缩放 %.1f×，世界 %.0f×%.0f m）\n"
       "  遗嘱消息   : 已注册",
       broker_host_.c_str(), broker_port_,
       robot_id_.c_str(), robot_name_.c_str(),
       state_topic_.c_str(), publish_hz_, cmd_topic_.c_str(),
+      fleet_tasks_topic_.c_str(), event_topic_.c_str(),
       map_topic_.c_str(), site_scale_, site_world_w_, site_world_h_);
   }
 
@@ -336,7 +377,20 @@ private:
     RCLCPP_INFO(self->get_logger(), "MQTT 已连接 %s:%d",
       self->broker_host_.c_str(), self->broker_port_);
 
-    mosquitto_subscribe(self->mosq_, nullptr, self->cmd_topic_.c_str(), 1);
+    int rc_cmd = mosquitto_subscribe(self->mosq_, nullptr, self->cmd_topic_.c_str(), 1);
+    if (rc_cmd != MOSQ_ERR_SUCCESS) {
+      RCLCPP_ERROR(self->get_logger(), "订阅 cmd 失败: %s", mosquitto_strerror(rc_cmd));
+    }
+
+    // 订阅看板的任务列表快照（retained）。任务结束后要在这份全量数组上改
+    // status 再回写，所以必须先拿到看板的版本，否则回写会丢字段。
+    int rc_task = mosquitto_subscribe(self->mosq_, nullptr, self->fleet_tasks_topic_.c_str(), 1);
+    if (rc_task != MOSQ_ERR_SUCCESS) {
+      RCLCPP_ERROR(self->get_logger(), "订阅 fleet/tasks 失败: %s", mosquitto_strerror(rc_task));
+    } else {
+      RCLCPP_INFO(self->get_logger(), "已订阅 %s（等待 retained 快照）",
+        self->fleet_tasks_topic_.c_str());
+    }
 
     // 连接成功后把站点地图发布一次（retained），看板据此渲染厂区图
     if (self->publish_map_) self->publishSiteMap();
@@ -409,6 +463,13 @@ private:
     auto *self = static_cast<MqttBridge *>(obj);
     const std::string text(static_cast<const char *>(msg->payload), msg->payloadlen);
 
+    // ---- 任务列表快照（3.5 回写的底稿）----
+    // 看板每次增删改任务都会 retained 发布全量数组，这里存一份最新版本。
+    if (msg->topic && self->fleet_tasks_topic_ == msg->topic) {
+      self->onFleetTasks(text);
+      return;
+    }
+
     json j;
     try {
       j = json::parse(text);
@@ -432,6 +493,7 @@ private:
         self->task_.clear();
       }
       RCLCPP_WARN(self->get_logger(), "执行紧急停止 (ESTOP)");
+      self->publishEvent("critical", "收到看板紧急停止指令，已撤销导航目标并停车");
       return;
     }
 
@@ -462,17 +524,19 @@ private:
     if (action == "assign") {
       std::string target_id, title;
       int task_id = 0;
+      json task_obj;      // 完整任务对象：回写时要原样带回全部字段
       if (j.contains("task") && j["task"].is_object()) {
         const auto &t = j["task"];
         target_id = t.value("target", "");
         title     = t.value("title", "");
         task_id   = t.value("id", 0);
+        task_obj  = t;
       } else {
         target_id = j.value("target", "");
         title     = j.value("title", "");
         task_id   = j.value("taskId", 0);
       }
-      self->startNavigation(target_id, title, task_id);
+      self->startNavigation(target_id, title, task_id, task_obj);
       return;
     }
 
@@ -482,7 +546,8 @@ private:
   // =========================================================================
   // 开始前往目标点
   // =========================================================================
-  void startNavigation(const std::string &target_id, const std::string &title, int task_id)
+  void startNavigation(const std::string &target_id, const std::string &title, int task_id,
+                       const json &task_obj = json())
   {
     if (target_id.empty()) {
       RCLCPP_WARN(get_logger(), "任务未指定目标点，忽略");
@@ -515,6 +580,8 @@ private:
       status_ = "working";
       task_ = title.empty() ? std::string("前往 ") + found->name : title;
       nav_start_time_ = now();
+      active_task_id_ = task_id;
+      if (task_obj.is_object()) cached_task_ = task_obj;   // 回写底稿
     }
     // 派单接管控制权：先让巡逻停手，否则两个节点同时发导航目标互相打断
     pausePatrol(true);
@@ -548,7 +615,7 @@ private:
       [this, name](const NavGoalHandle::SharedPtr & handle) {
         if (!handle) {
           RCLCPP_WARN(get_logger(), "Nav2 拒绝了目标 %s（可能不在代价地图可通行区）", name.c_str());
-          finishTask("（目标被拒绝）");
+          finishTask("（目标被拒绝）", Outcome::Failed);
           return;
         }
         std::lock_guard<std::mutex> lk(data_mutex_);
@@ -559,30 +626,48 @@ private:
       [this, name](const NavGoalHandle::WrappedResult & result) {
         if (result.code == rclcpp_action::ResultCode::SUCCEEDED) {
           RCLCPP_INFO(get_logger(), "任务完成：已到达 %s", name.c_str());
-          finishTask(name);
+          finishTask(name, Outcome::Success);
         } else if (result.code == rclcpp_action::ResultCode::CANCELED) {
           RCLCPP_INFO(get_logger(), "导航已取消（%s）", name.c_str());
-          finishTask("已取消");
+          finishTask("已取消", Outcome::Canceled);
         } else {
           RCLCPP_WARN(get_logger(), "导航失败（%s），Nav2 将自行尝试恢复行为", name.c_str());
-          finishTask("（导航失败）");
+          char buf[192];
+          std::snprintf(buf, sizeof(buf),
+            "导航失败（%s）：Nav2 未能到达目标点，本次任务放弃", name.c_str());
+          publishEvent("warning", buf);
+          finishTask("（导航失败）", Outcome::Failed);
         }
       };
     nav_client_->async_send_goal(goal, options);
   }
 
-  // 结束当前任务：清状态、停车、恢复巡逻
-  void finishTask(const std::string & detail)
+  // 任务结局：决定回写 fleet/tasks 时把 status 改成什么
+  enum class Outcome { Success, Canceled, Failed };
+
+  // 结束当前任务：清状态、停车、恢复巡逻、回写任务状态
+  void finishTask(const std::string & detail, Outcome outcome = Outcome::Canceled)
   {
+    int tid = 0;
     {
       std::lock_guard<std::mutex> lk(data_mutex_);
       navigating_ = false;
       status_ = "idle";
       task_.clear();
       nav_goal_.reset();
+      tid = active_task_id_;
+      active_task_id_ = 0;
     }
     pub_cmd_vel_->publish(geometry_msgs::msg::Twist());   // 确保停车
     pausePatrol(false);
+
+    // 3.5 任务回写：成功 → completed；被取消/急停 → revoked；
+    // 失败则保持 published，让调度方可以重新派单（规范里只有这四种状态）。
+    if (outcome == Outcome::Success) {
+      writeBackTask(tid, "completed");
+    } else if (outcome == Outcome::Canceled) {
+      writeBackTask(tid, "revoked");
+    }
     (void)detail;
   }
 
@@ -597,10 +682,210 @@ private:
     if (handle) {
       nav_client_->async_cancel_goal(handle);
       RCLCPP_WARN(get_logger(), "取消导航目标（%s）", reason);
+      char buf[160];
+      std::snprintf(buf, sizeof(buf), "任务被取消：%s", reason);
+      publishEvent("info", buf);
     } else {
       RCLCPP_INFO(get_logger(), "当前无导航目标可取消（%s）", reason);
     }
-    finishTask("已取消");
+    finishTask("已取消", Outcome::Canceled);
+  }
+
+
+  // =========================================================================
+  // 3.5 告警上报 {P}/event
+  //
+  // 报文（见 MQTT-INTERFACE.md 5.2 节）：
+  //   { "alarmId": 1042, "ts": 1789008000000, "level": "critical",
+  //     "source": "仿真狗", "message": "..." }
+  // level 取 info / warning / critical；alarmId 由上报方分配且全局递增。
+  // 没有这条上行通道时，看板的告警中心在真实链路下永远是空的
+  // （只有 mock 模式的设备模拟器会自己造告警）。
+  // =========================================================================
+  void publishEvent(const char * level, const std::string &message)
+  {
+    if (!mqtt_connected_) return;   // 断线时不上报，避免重连后灌一堆旧告警
+
+    json e = {
+      {"alarmId", alarm_base_id_ + (++alarm_seq_)},
+      {"ts",      wallClockMs()},
+      {"level",   level},
+      {"source",  robot_name_},
+      {"message", message},
+    };
+    const std::string payload = e.dump();
+    int rc = mosquitto_publish(mosq_, nullptr, event_topic_.c_str(),
+      static_cast<int>(payload.size()), payload.c_str(), 1, false);
+    if (rc == MOSQ_ERR_SUCCESS) {
+      RCLCPP_WARN(get_logger(), "已上报告警[%s] %s", level, message.c_str());
+    } else {
+      RCLCPP_WARN(get_logger(), "告警上报失败: %s", mosquitto_strerror(rc));
+    }
+  }
+
+  // 同类告警冷却：同一个 key 在 cooldown_s 内只报一次，避免每秒刷屏
+  bool eventAllowed(const std::string &key, double cooldown_s)
+  {
+    const auto t = now();
+    std::lock_guard<std::mutex> lk(data_mutex_);
+    auto it = event_last_.find(key);
+    if (it != event_last_.end() && (t - it->second).seconds() < cooldown_s) return false;
+    event_last_[key] = t;
+    return true;
+  }
+
+  // =========================================================================
+  // 3.5 任务状态回写 {P}/fleet/tasks
+  //
+  // 看板是任务列表的主要写入方，每次增删改都 retained 发布【全量数组】；
+  // 机器人执行结束后要在同一主题上把该任务 status 改成 completed / revoked
+  // 并重新全量发布（retained）。否则看板的任务列表永远停在"已发布"，
+  // 用户根本看不出任务到底做完了没有。
+  // =========================================================================
+  void writeBackTask(int task_id, const char *new_status)
+  {
+    if (task_id <= 0) return;      // 无 id（如手动测试报文）无可回写
+
+    std::string payload;
+    bool ready = false;
+    {
+      std::lock_guard<std::mutex> lk(data_mutex_);
+      const long long ts = wallClockMs();
+
+      // 记下终态：看板之后若重发旧列表，还要把这个终态盖回去
+      task_terminal_[task_id] = std::make_pair(std::string(new_status), ts);
+
+      if (!fleet_tasks_.is_array()) {
+        // 还没收到看板的快照：用 assign 里缓存的任务对象自己拼一个数组
+        if (cached_task_.is_object()) {
+          json t = cached_task_;
+          t["id"] = task_id;
+          t["status"] = new_status;
+          t["updatedAt"] = ts;
+          fleet_tasks_ = json::array({t});
+          ready = true;
+        }
+      } else {
+        bool hit = false;
+        for (auto &t : fleet_tasks_) {
+          if (t.value("id", 0) == task_id) {
+            t["status"] = new_status;
+            t["updatedAt"] = ts;
+            hit = true;
+            break;
+          }
+        }
+        // 快照里没有这一条（看板可能还没同步到）：补一条进去
+        if (!hit && cached_task_.is_object()) {
+          json t = cached_task_;
+          t["id"] = task_id;
+          t["status"] = new_status;
+          t["updatedAt"] = ts;
+          fleet_tasks_.push_back(t);
+        }
+        ready = true;
+      }
+      if (ready) payload = fleet_tasks_.dump();
+    }
+
+    if (!ready) {
+      RCLCPP_WARN(get_logger(), "任务#%d 状态回写跳过：既无列表快照也无任务对象", task_id);
+      return;
+    }
+
+    int rc = mosquitto_publish(mosq_, nullptr, fleet_tasks_topic_.c_str(),
+      static_cast<int>(payload.size()), payload.c_str(), 1, /*retain=*/true);
+    if (rc == MOSQ_ERR_SUCCESS) {
+      RCLCPP_INFO(get_logger(), "任务#%d 已回写 %s（fleet/tasks 全量 %zu 字节）",
+        task_id, new_status, payload.size());
+    } else {
+      RCLCPP_WARN(get_logger(), "任务#%d 回写失败: %s",
+        task_id, mosquitto_strerror(rc));
+    }
+  }
+
+  // 收到看板的任务列表全量快照：存下来，并把本机已产生的终态盖回去
+  void onFleetTasks(const std::string &text)
+  {
+    json arr;
+    try {
+      arr = json::parse(text);
+    } catch (const std::exception &e) {
+      RCLCPP_WARN(get_logger(), "任务列表解析失败: %s", e.what());
+      return;
+    }
+    if (!arr.is_array()) return;
+
+    bool patched = false;
+    std::string payload;
+    {
+      std::lock_guard<std::mutex> lk(data_mutex_);
+      for (auto &t : arr) {
+        auto it = task_terminal_.find(t.value("id", 0));
+        if (it != task_terminal_.end() && t.value("status", "") != it->second.first) {
+          t["status"] = it->second.first;
+          t["updatedAt"] = it->second.second;
+          patched = true;
+        }
+      }
+      fleet_tasks_ = arr;
+      if (patched) payload = fleet_tasks_.dump();
+    }
+    RCLCPP_INFO(get_logger(), "已同步看板任务列表：%zu 条%s",
+      arr.size(), patched ? "（已补回本机终态）" : "");
+
+    // 只有真的补过终态才回发一次，避免和看板来回刷。
+    // 看板收到后只 setTasks 不会回发，所以不存在无限循环。
+    if (patched && mqtt_connected_) {
+      mosquitto_publish(mosq_, nullptr, fleet_tasks_topic_.c_str(),
+        static_cast<int>(payload.size()), payload.c_str(), 1, true);
+    }
+  }
+
+  // =========================================================================
+  // 3.5 阈值告警检查（挂在 1 Hz 状态定时器上）
+  // =========================================================================
+  void checkAlarms()
+  {
+    if (!mqtt_connected_) return;
+
+    double bat = 0.0, temp = 0.0;
+    {
+      std::lock_guard<std::mutex> lk(data_mutex_);
+      bat = battery_;
+      temp = motor_temp_;
+    }
+
+    char buf[192];
+
+    // ---- 电量：越阈只报一次（不会因为持续低电而每秒刷一条）----
+    if (bat <= battery_crit_ && !battery_crit_reported_) {
+      battery_crit_reported_ = true;
+      battery_warn_reported_ = true;
+      std::snprintf(buf, sizeof(buf),
+        "电池电量 %.1f%% 低于严重阈值 %.0f%%，请立即返回充电桩", bat, battery_crit_);
+      publishEvent("critical", buf);
+    } else if (bat <= battery_warn_ && !battery_warn_reported_) {
+      battery_warn_reported_ = true;
+      std::snprintf(buf, sizeof(buf),
+        "电池电量 %.1f%% 低于预警阈值 %.0f%%，建议尽快安排充电", bat, battery_warn_);
+      publishEvent("warning", buf);
+    }
+
+    // ---- 电机温度：带 60 s 冷却，高温持续时不会刷屏 ----
+    if (temp >= temp_crit_) {
+      if (eventAllowed("temp_crit", 60.0)) {
+        std::snprintf(buf, sizeof(buf),
+          "电机温度 %.1f°C 超过临界阈值 %.0f°C，立即停机检查", temp, temp_crit_);
+        publishEvent("critical", buf);
+      }
+    } else if (temp >= temp_warn_) {
+      if (eventAllowed("temp_warn", 60.0)) {
+        std::snprintf(buf, sizeof(buf),
+          "电机温度 %.1f°C 超过预警阈值 %.0f°C，注意散热", temp, temp_warn_);
+        publishEvent("warning", buf);
+      }
+    }
   }
 
 
@@ -635,6 +920,10 @@ private:
     if (timeout) {
       RCLCPP_WARN(get_logger(), "任务超时（%.0f s）自动取消：%s",
         nav_timeout_s_, name.c_str());
+      char buf[192];
+      std::snprintf(buf, sizeof(buf), "导航超时（%.0f s）：未能到达 %s，任务已撤销",
+        nav_timeout_s_, name.c_str());
+      publishEvent("warning", buf);
       cancelNavigation("超时");
     }
   }
@@ -696,8 +985,11 @@ private:
         else                                status_ = moving ? "working" : "idle";
       }
 
-      // 电机温度：基础 38°C + 关节负载，一阶惯性避免跳变
-      const double target_temp = 38.0 + joint_load_ * 1.5 + (moving ? 8.0 : 0.0);
+      // 电机温度：基础 38°C + 步态负载（归一化 0~1）× 22°C + 行走附加 6°C。
+      // 典型值：静止停靠 38°C、正常巡逻 55~60°C、重载/受阻顶墙 66°C。
+      // 与"步态电机正常工作 40~70°C、超过 75°C 需预警"的经验区间对齐，
+      // 既不会动不动就报临界，也不会在真过热时漏报。
+      const double target_temp = 38.0 + joint_load_ * 22.0 + (moving ? 6.0 : 0.0);
       motor_temp_ += (target_temp - motor_temp_) * 0.1;
 
       state = {
@@ -743,14 +1035,31 @@ private:
       "上报: %s 电量 %.1f%% 仿真位姿 (%.2f,%.2f) 速度 %.2f%s",
       status_.c_str(), battery_, pos_x_, pos_y_, speed_,
       navigating_ ? " [前往目标中]" : "");
+
+    // 3.5 阈值告警：复用 1 Hz 状态节拍检查电量与电机温度
+    checkAlarms();
   }
 
   // ---------------- 成员变量 ----------------
   std::string broker_host_, robot_id_, robot_name_, robot_model_;
   std::string topic_prefix_, username_, password_;
   std::string state_topic_, cmd_topic_, map_topic_;
+  std::string fleet_tasks_topic_, event_topic_;     // 3.5 任务回写 / 告警上行
   int broker_port_ = 1883, keepalive_ = 45;
   double publish_hz_ = 1.0, battery_ = 100.0;
+
+  // 3.5 告警参数与 alarmId 分配器
+  long long alarm_base_id_ = 1000000, alarm_seq_ = 0;
+  double battery_warn_ = 20.0, battery_crit_ = 10.0;
+  double temp_warn_ = 75.0, temp_crit_ = 85.0;
+  bool battery_warn_reported_ = false, battery_crit_reported_ = false;
+
+  // 3.5 任务列表：看板发来的全量快照 + assign 缓存的完整任务对象
+  json fleet_tasks_;                    // 最新一份全量数组
+  json cached_task_;                    // assign 报文里的 task 对象
+  std::map<int, std::pair<std::string, long long>> task_terminal_;  // id → (终态, 时间)
+  int active_task_id_ = 0;              // 正在执行的任务 id（回写用）
+  std::map<std::string, rclcpp::Time> event_last_;  // 告警冷却表
 
   double site_scale_ = 20.0, site_offset_x_ = 100.0, site_offset_y_ = 50.0;
   double site_world_w_ = 20.0, site_world_h_ = 14.0;

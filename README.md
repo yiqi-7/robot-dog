@@ -7,10 +7,10 @@
 
 ## 仓库包含两部分
 
-| 目录 | 内容 | 归属 |
-|---|---|---|
-| `src/quadruped_sim/` | ROS 2 仿真功能包：机器狗模型、C++ 步态、传感器、SLAM/Nav2 | **本项目自研** |
-| `quadruped-ops/` | 厂区监控运维看板（局域网 MQTT 队管系统） | 课程/项目方提供，原样引入 |
+| 目录 | 内容 |
+|---|---|
+| `src/quadruped_sim/` | ROS 2 仿真功能包：机器狗模型、C++ 步态、传感器、SLAM/Nav2 |
+| `quadruped-ops/` | 厂区监控运维看板（局域网 MQTT 队管系统） |
 
 两层通过 **MQTT** 通信：机器狗上报遥测、接收任务；看板负责可视化与派单。
 接口约定见 [`quadruped-ops/MQTT-INTERFACE.md`](quadruped-ops/MQTT-INTERFACE.md)。
