@@ -12,7 +12,10 @@ recordings/*
 !recordings/.gitkeep
 
 # 模型缓存：piper 语音模型体积大（61MB），只入库配置文件
+# 获取方式：从课程教师包（class9-backup）拷贝 zh_CN-huayan-medium.onnx 与 .onnx.json
+# 到 quadruped-ops/models/piper/（modelscope 旧地址已 404）
 models/piper/*.onnx
+quadruped-ops/models/piper/*.onnx
 
 # Python 缓存
 __pycache__/
