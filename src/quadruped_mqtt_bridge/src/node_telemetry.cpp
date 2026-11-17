@@ -1,10 +1,10 @@
 // ===========================================================================
-// node_telemetry.cpp —— 遥测与告警：1Hz 状态上行、电量/温度告警、事件冷却
-// 从原 mqtt_bridge.cpp 拆出，行为不变；类声明见 mqtt_bridge_node.hpp
+// node_telemetry.cpp —— mqtt_bridge 的遥测与告警：1Hz 状态上行、电量/温度告警、
+// 事件冷却。从原单进程节点搬过来，行为与报文字段一字未改；
+// 唯一变化：status/currentTask 里的"任务信息"来自 task_runner/state（见 node_core.cpp）
 // ===========================================================================
 
 #include "quadruped_mqtt_bridge/mqtt_bridge_node.hpp"
-
 
 
   // =========================================================================
@@ -16,21 +16,26 @@
   // level 取 info / warning / critical；alarmId 由上报方分配且全局递增。
   // 没有这条上行通道时，看板的告警中心在真实链路下永远是空的
   // （只有 mock 模式的设备模拟器会自己造告警）。
+  //
+  // 【多发布者约定】event 主题允许 mqtt_bridge（电量/温度）与 task_runner
+  // （急停/导航失败/任务完成）共同发布；两边用同一基址的不同号段，不会撞 alarmId。
   // =========================================================================
-  void MqttBridge::publishEvent(const char * level, const std::string &message) 
+  void MqttBridgeNode::publishEvent(const char * level, const std::string &message)
   {
-    if (!mqtt_connected_) return;   // 断线时不上报，避免重连后灌一堆旧告警
+    {
+      std::lock_guard<std::mutex> lk(data_mutex_);
+      if (!mqtt_connected_) return;   // 断线时不上报，避免重连后灌一堆旧告警
+    }
 
     json e = {
       {"alarmId", alarm_base_id_ + (++alarm_seq_)},
-      {"ts",      wallClockMs()},
+      {"ts",      qmb::wallClockMs()},
       {"level",   level},
       {"source",  robot_name_},
       {"message", message},
     };
     const std::string payload = e.dump();
-    int rc = mosquitto_publish(mosq_, nullptr, event_topic_.c_str(),
-      static_cast<int>(payload.size()), payload.c_str(), 1, false);
+    int rc = qmb::publishText(mosq_, event_topic_, payload, 1, false);
     if (rc == MOSQ_ERR_SUCCESS) {
       RCLCPP_WARN(get_logger(), "已上报告警[%s] %s", level, message.c_str());
     } else {
@@ -40,7 +45,7 @@
 
 
   // 同类告警冷却：同一个 key 在 cooldown_s 内只报一次，避免每秒刷屏
-  bool MqttBridge::eventAllowed(const std::string &key, double cooldown_s) 
+  bool MqttBridgeNode::eventAllowed(const std::string &key, double cooldown_s)
   {
     const auto t = now();
     std::lock_guard<std::mutex> lk(data_mutex_);
@@ -54,9 +59,12 @@
   // =========================================================================
   // 3.5 阈值告警检查（挂在 1 Hz 状态定时器上）
   // =========================================================================
-  void MqttBridge::checkAlarms() 
+  void MqttBridgeNode::checkAlarms()
   {
-    if (!mqtt_connected_) return;
+    {
+      std::lock_guard<std::mutex> lk(data_mutex_);
+      if (!mqtt_connected_) return;
+    }
 
     double bat = 0.0, temp = 0.0;
     {
@@ -102,9 +110,13 @@
   // =========================================================================
   // 状态上报（1 Hz）
   // =========================================================================
-  void MqttBridge::onPublishTimer() 
+  void MqttBridgeNode::onPublishTimer()
   {
     json state;
+    // 日志快照（避免在锁外读共享成员，同时保留"不持锁打日志"的原意）
+    std::string log_status;
+    double log_bat = 0.0, log_x = 0.0, log_y = 0.0, log_speed = 0.0;
+    bool log_nav = false;
     {
       std::lock_guard<std::mutex> lk(data_mutex_);
 
@@ -115,10 +127,11 @@
       battery_ = std::max(0.0, battery_ - (moving ? drain_moving : drain_idle) / publish_hz_);
 
       // 状态机：fault > 有任务 > 运动中 > 待机
-      if (status_ != "fault") {
-        if (!task_.empty() || navigating_) status_ = "working";
-        else                                status_ = moving ? "working" : "idle";
-      }
+      // fault 与 task_/navigating_ 现在都由 task_runner 经 task_runner/state 告知，
+      // 判定规则与拆分前完全一致。
+      if (remote_status_ == "fault") status_ = "fault";
+      else if (!task_.empty() || navigating_) status_ = "working";
+      else                                status_ = moving ? "working" : "idle";
 
       // 电机温度：基础 38°C + 步态负载（归一化 0~1）× 22°C + 行走附加 6°C。
       // 典型值：静止停靠 38°C、正常巡逻 55~60°C、重载/受阻顶墙 66°C。
@@ -139,7 +152,7 @@
         {"y",         std::round(simToDashY(pos_y_) * 10.0) / 10.0},
         {"speed",     std::round(speed_ * 100.0) / 100.0},
         // 朝向同样要取反：看板 y 轴向下，与仿真相反，否则箭头方向与地图运动方向不一致
-        {"heading",   std::round(wrapPi(-heading_) * 1000.0) / 1000.0},
+        {"heading",   std::round(qmb::wrapPi(-heading_) * 1000.0) / 1000.0},
         {"motorTemp", std::round(motor_temp_ * 10.0) / 10.0},
         {"signal",    signal_},
         {"uptimeH",   std::round((now() - start_time_).seconds() / 36.0) / 100.0},
@@ -148,6 +161,10 @@
       };
       connected_snapshot_ = mqtt_connected_;
       odom_snapshot_ = odom_ok_;
+
+      log_status = status_;
+      log_bat = battery_; log_x = pos_x_; log_y = pos_y_;
+      log_speed = speed_; log_nav = navigating_;
     }
 
     if (!connected_snapshot_) {
@@ -159,8 +176,7 @@
     }
 
     const std::string payload = state.dump();
-    int rc = mosquitto_publish(mosq_, nullptr, state_topic_.c_str(),
-      static_cast<int>(payload.size()), payload.c_str(), 1, true);
+    int rc = qmb::publishText(mosq_, state_topic_, payload, 1, /*retain=*/true);
     if (rc != MOSQ_ERR_SUCCESS && rc != MOSQ_ERR_NO_CONN) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
         "publish 失败: %s", mosquitto_strerror(rc));
@@ -168,8 +184,8 @@
 
     RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 10000,
       "上报: %s 电量 %.1f%% 仿真位姿 (%.2f,%.2f) 速度 %.2f%s",
-      status_.c_str(), battery_, pos_x_, pos_y_, speed_,
-      navigating_ ? " [前往目标中]" : "");
+      log_status.c_str(), log_bat, log_x, log_y, log_speed,
+      log_nav ? " [前往目标中]" : "");
 
     // 3.5 阈值告警：复用 1 Hz 状态节拍检查电量与电机温度
     checkAlarms();

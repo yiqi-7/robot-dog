@@ -241,19 +241,41 @@ def launch_setup(context, *args, **kwargs):
         ],
     )
 
-    # MQTT 看板桥：遥测上报 + 接收看板派单(estop/resume/assign)
+    # MQTT 看板桥：按单一职责拆成三个节点，各自独立连 broker（主题/参数不变）
+    #   mqtt_bridge  遥测上报(1Hz state) + 站点地图 + 告警；唯一注册遗嘱消息的节点
+    #   task_runner  接收看板派单(estop/resume/assign/cancel) + Nav2 + 任务回写
+    #   voice_link   语音上行(§3.1) + TTS 播报(§3.2)
+    # 三者互不依赖（任一重启不影响其它两个），所以放在同一 TimerAction 组里并行起。
+    def mqtt_params():
+        # 每个节点单独一份参数列表：launch_ros 会就地规范化 dict，共享同一实例不安全
+        return [{
+            "use_sim_time": use_sim_time,
+            "broker_host": "127.0.0.1",
+            "broker_port": 1883,
+        }]
+
     mqtt_bridge = Node(
         package="quadruped_mqtt_bridge",
         executable="mqtt_bridge",
         name="mqtt_bridge",
         output="screen",
-        parameters=[
-            {
-                "use_sim_time": use_sim_time,
-                "broker_host": "127.0.0.1",
-                "broker_port": 1883,
-            }
-        ],
+        parameters=mqtt_params(),
+    )
+
+    task_runner = Node(
+        package="quadruped_mqtt_bridge",
+        executable="task_runner",
+        name="task_runner",
+        output="screen",
+        parameters=mqtt_params(),
+    )
+
+    voice_link = Node(
+        package="quadruped_mqtt_bridge",
+        executable="voice_link",
+        name="voice_link",
+        output="screen",
+        parameters=mqtt_params(),
     )
 
     # 多航点巡逻节点（航点参数可配，默认工厂环线）
@@ -409,7 +431,7 @@ def launch_setup(context, *args, **kwargs):
         robot_state_publisher,
         gz_sim,
         TimerAction(period=3.0, actions=[spawn]),
-        TimerAction(period=5.0, actions=[bridge, gait, odom, camera_info, rgb_camera_info, image_sender, mqtt_bridge]),
+        TimerAction(period=5.0, actions=[bridge, gait, odom, camera_info, rgb_camera_info, image_sender, mqtt_bridge, task_runner, voice_link]),
         TimerAction(period=30.0, actions=[patrol_node]),
         # CHAMP 依赖 gz 桥接（/joint_states 与 cmd_pos 都要通），放到 8 秒起
         TimerAction(period=8.0, actions=[champ_launch]),
