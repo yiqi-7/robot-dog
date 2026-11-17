@@ -43,8 +43,6 @@ robot-dog/
 ├── maps/                     # SLAM 建图输出（运行时生成）
 ├── captures/                 # 实验截图（运行时生成）
 ├── recordings/               # 录制数据（运行时生成）
-├── MQTT-INTERFACE.md         # 厂区监控看板 MQTT 接口规范
-├── VOICE-INTERFACE.md        # 语音指令接口规范
 └── README.md
 ```
 
@@ -194,11 +192,15 @@ ros2 launch quadruped_sim quadruped_gz.launch.py gait:=none    # 不起步态控
 0.37 rad，约 60%）。已把关节位置控制器增益从 p=50/60 提到 p=120/150，
 速度提升 53%；再往上调（p=300/350）反而变慢，已回退。
 
-## 接口文档
+## 文档索引
 
-- [MQTT-INTERFACE.md](MQTT-INTERFACE.md)：厂区监控运维看板的 MQTT 接口规范（v2.1）
-- [VOICE-INTERFACE.md](VOICE-INTERFACE.md)：语音指令链路（ASR → LLM → 任务下发）
-- [NAV2-GUIDE.md](NAV2-GUIDE.md)：Nav2 导航使用指南（CLI 发目标、实测性能、已知问题）
+根目录只保留本 README，其余文档随所属模块放在各自目录下：
+
+- 看板侧（`quadruped-ops/`）
+  - [MQTT-INTERFACE.md](quadruped-ops/MQTT-INTERFACE.md)：厂区监控运维看板的 MQTT 接口规范（v2.1）
+  - [VOICE-INTERFACE.md](quadruped-ops/VOICE-INTERFACE.md)：语音指令链路（ASR → LLM → 任务下发）
+- 机器人侧（`src/quadruped_sim/docs/`）
+  - [NAV2-GUIDE.md](src/quadruped_sim/docs/NAV2-GUIDE.md)：Nav2 导航使用指南（CLI 发目标、实测性能、已知问题）
 
 ## 已知限制
 
