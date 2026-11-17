@@ -89,11 +89,15 @@ if(NOT MOSQUITTO_LIBRARY OR NOT MOSQUITTO_INCLUDE_DIR)
 else()
   add_executable(mqtt_bridge src/mqtt_bridge.cpp)
   target_include_directories(mqtt_bridge PRIVATE ${MOSQUITTO_INCLUDE_DIR})
+  # 派单导航走 Nav2 动作接口，因此要链 nav2_msgs 与 rclcpp_action
   target_link_libraries(mqtt_bridge
     rclcpp::rclcpp
+    rclcpp_action::rclcpp_action
+    nav2_msgs::nav2_msgs
     geometry_msgs::geometry_msgs
     nav_msgs::nav_msgs
     sensor_msgs::sensor_msgs
+    std_msgs::std_msgs
     ${MOSQUITTO_LIBRARY})
   if(nlohmann_json_FOUND)
     target_link_libraries(mqtt_bridge nlohmann_json::nlohmann_json)

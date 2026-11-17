@@ -21,7 +21,12 @@ export default function App() {
             <Route path="*" element={<Home />} />
           </Routes>
         </AppShell>
-        <Toaster theme="dark" position="top-center" />
+        {/*
+          提示框改到右下角：原先 top-center 正好压住顶栏导航
+          （总览 / 机器人 / 任务管理 / 告警中心），提示出现期间点不到导航。
+          同时开启关闭按钮，提示可手动收起。
+        */}
+        <Toaster theme="dark" position="bottom-right" closeButton toastOptions={{ duration: 3500 }} />
       </TaskProvider>
     </SimProvider>
   );

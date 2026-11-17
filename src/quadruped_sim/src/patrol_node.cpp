@@ -14,6 +14,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <nav2_msgs/action/navigate_to_pose.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
+#include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/string.hpp>
 
 using NavigateToPose = nav2_msgs::action::NavigateToPose;
@@ -41,7 +42,7 @@ static const std::vector<std::string> kDefaultRoute = {
   "0.0,-2.5,北走廊",
   "2.2,-3.2,墙洞东",
   "4.0,-4.3,缝北口",
-  "2.5,-6.5,货架南",
+  "2.5,-5.8,货架南",
   "0.2,-5.4,出生点",
 };
 
@@ -84,6 +85,15 @@ public:
 
     client_ = rclcpp_action::create_client<NavigateToPose>(this, "navigate_to_pose");
     status_pub_ = create_publisher<std_msgs::msg::String>("/patrol/status", 10);
+    // 派单互斥开关：mqtt_bridge 派单时置 false，任务结束后置 true
+    enable_sub_ = create_subscription<std_msgs::msg::Bool>(
+      "/patrol/enable", 10,
+      [this](std_msgs::msg::Bool::SharedPtr msg) {
+        if (enabled_ != msg->data) {
+          enabled_ = msg->data;
+          RCLCPP_INFO(get_logger(), "巡逻%s", enabled_ ? "恢复" : "暂停");
+        }
+      });
     timer_ = create_wall_timer(500ms, std::bind(&PatrolNode::step, this));
   }
 
@@ -173,6 +183,17 @@ private:
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 10000, "等待 navigate_to_pose server");
       return;
     }
+    // 派单接管时暂停巡逻：mqtt_bridge 发 /patrol/enable = false。
+    // 两个节点都发 NavigateToPose，若不互斥会互相取消/打断目标，
+    // 表现为机器人原地犹豫、任务永不完成。
+    if (!enabled_) {
+      if (active_) {
+        RCLCPP_INFO(get_logger(), "收到暂停指令，取消当前航点");
+        if (goal_handle_) { client_->async_cancel_goal(goal_handle_); }
+        active_ = false;
+      }
+      return;
+    }
     if (active_) {
       const auto elapsed = std::chrono::steady_clock::now() - goal_start_;
       if (std::chrono::duration<double>(elapsed).count() > goal_timeout_) {
@@ -189,6 +210,7 @@ private:
 
   rclcpp_action::Client<NavigateToPose>::SharedPtr client_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_pub_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr enable_sub_;
   rclcpp::TimerBase::SharedPtr timer_;
   std::shared_ptr<GoalHandle> goal_handle_;
   std::vector<Waypoint> route_;
@@ -196,6 +218,7 @@ private:
   int attempt_;
   int cooldown_ = 0;
   bool active_ = false;
+  bool enabled_ = true;   // 巡逻开关（/patrol/enable，派单期间置 false）
   std::chrono::steady_clock::time_point goal_start_;
   double goal_timeout_ = 120.0;
 };

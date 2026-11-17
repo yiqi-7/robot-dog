@@ -1,6 +1,7 @@
 import { useSim } from "@/sim/store";
 import { facilityStatus, type Robot } from "@/types";
 import { ROBOT_STATUS_COLORS } from "./hud";
+import { Zoomable } from "./Zoomable";
 import { cn } from "@/lib/utils";
 
 const FACILITY_COLORS = {
@@ -90,11 +91,13 @@ export function FloorMap({
   const u = W / 1200;
 
   return (
-    <div className={cn("relative", className)}>
+    // 双击放大/还原：放大态下取消最小高度限制、放宽最大高度到 86vh
+    <Zoomable className={className} label="厂区平面图">
+      {(expanded) => (
       <svg
         viewBox={`0 0 ${W} ${H}`}
         className="block w-full"
-        style={{ minHeight: 420, maxHeight: "72vh" }}
+        style={{ minHeight: expanded ? undefined : 420, maxHeight: expanded ? "86vh" : "72vh" }}
         preserveAspectRatio="xMidYMid meet"
       >
         <defs>
@@ -224,6 +227,7 @@ export function FloorMap({
           />
         ))}
       </svg>
-    </div>
+      )}
+    </Zoomable>
   );
 }

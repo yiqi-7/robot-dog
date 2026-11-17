@@ -3,6 +3,7 @@ import { useSim } from "@/sim/store";
 import type { Robot } from "@/types";
 import { STREAMING } from "@/config";
 import { useWhep } from "@/components/useWhep";
+import { Zoomable } from "@/components/Zoomable";
 import camWorkshop from "@/assets/cam/workshop.png";
 import camWarehouse from "@/assets/cam/warehouse.png";
 import camCharging from "@/assets/cam/charging.png";
@@ -30,6 +31,9 @@ function Corner({ className }: { className: string }) {
  *  1. WebRTC 实时流（MediaMTX，机器人 RTSP 推流 → 看板 WHEP 拉流）
  *  2. MQTT 图像帧（旧链路兜底，6s 内有新帧）
  *  3. 静态底图（无推流时占位）
+ *
+ * 双击画面可放大到接近全屏，再次双击（或 ESC / 点遮罩）还原。
+ * 放大走「同一 DOM 实例换定位」而非克隆，避免 <video> 重新挂载断流。
  */
 export function CameraCard({ robot, className }: { robot: Robot; className?: string }) {
   const { now, frames } = useSim();
@@ -56,54 +60,70 @@ export function CameraCard({ robot, className }: { robot: Robot; className?: str
           : "等待 RTSP 推流 · STANDBY";
 
   return (
-    <div className={`scanlines relative overflow-hidden border border-border bg-black ${className ?? ""}`}>
-      {/* WebRTC 视频层（live 时显示，覆盖底图） */}
-      <video
-        ref={videoRef}
-        muted
-        autoPlay
-        playsInline
-        className={`aspect-video w-full object-cover ${mode === "webrtc" ? "opacity-95" : "hidden"}`}
-      />
-      {/* 兜底图像层：MQTT 帧或静态底图 */}
-      {mode !== "webrtc" && (
-        <img
-          src={mode === "mqtt" ? frame!.url : CAM_IMAGES[robot.cam]}
-          alt={`${robot.name} 摄像头画面`}
-          className="aspect-video w-full object-cover opacity-90"
-          draggable={false}
-        />
-      )}
-      {/* 四角取景框 */}
-      <Corner className="left-2 top-2 border-l-2 border-t-2" />
-      <Corner className="right-2 top-2 border-r-2 border-t-2" />
-      <Corner className="bottom-2 left-2 border-b-2 border-l-2" />
-      <Corner className="bottom-2 right-2 border-b-2 border-r-2" />
-
-      {/* 顶部信息条 */}
-      <div className="absolute inset-x-0 top-0 flex items-center justify-between bg-gradient-to-b from-black/70 to-transparent px-3 pb-4 pt-2">
-        <div className="flex items-center gap-2">
-          <span className="rec-dot inline-block h-2 w-2 rounded-full bg-[#f87171]" />
-          <span className="font-hud text-[11px] tracking-[0.15em] text-white/90">
-            {robot.id}-CAM0{robot.cam + 1} · {CAM_NAMES[robot.cam]}
-          </span>
-        </div>
-        <span className="font-hud text-[11px] tracking-wider text-white/70">{ts}</span>
-      </div>
-
-      {/* 底部信息条 */}
-      <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/70 to-transparent px-3 pb-2 pt-4">
-        <span className="font-hud text-[10px] tracking-[0.15em] text-white/60">
-          SIG {Math.round(robot.signal)}dBm · 1080P
-        </span>
-        <span
-          className={`font-hud text-[10px] tracking-[0.15em] ${
-            mode === "webrtc" ? "text-[#34d399]" : "text-[#fbbf24]"
+    <Zoomable className={className} label={`${robot.id} 摄像头画面`}>
+      {(expanded) => (
+        <div
+          className={`scanlines relative overflow-hidden border border-border bg-black ${
+            expanded ? "h-full w-full" : ""
           }`}
         >
-          {modeLabel}
-        </span>
-      </div>
-    </div>
+          {/* WebRTC 视频层（live 时显示，覆盖底图） */}
+          <video
+            ref={videoRef}
+            muted
+            autoPlay
+            playsInline
+            className={
+              expanded
+                ? `h-full w-full bg-black object-contain ${mode === "webrtc" ? "opacity-95" : "hidden"}`
+                : `aspect-video w-full object-cover ${mode === "webrtc" ? "opacity-95" : "hidden"}`
+            }
+          />
+          {/* 兜底图像层：MQTT 帧或静态底图 */}
+          {mode !== "webrtc" && (
+            <img
+              src={mode === "mqtt" ? frame!.url : CAM_IMAGES[robot.cam]}
+              alt={`${robot.name} 摄像头画面`}
+              className={
+                expanded
+                  ? "h-full w-full bg-black object-contain opacity-90"
+                  : "aspect-video w-full object-cover opacity-90"
+              }
+              draggable={false}
+            />
+          )}
+          {/* 四角取景框 */}
+          <Corner className="left-2 top-2 border-l-2 border-t-2" />
+          <Corner className="right-2 top-2 border-r-2 border-t-2" />
+          <Corner className="bottom-2 left-2 border-b-2 border-l-2" />
+          <Corner className="bottom-2 right-2 border-b-2 border-r-2" />
+
+          {/* 顶部信息条 */}
+          <div className="absolute inset-x-0 top-0 flex items-center justify-between bg-gradient-to-b from-black/70 to-transparent px-3 pb-4 pt-2">
+            <div className="flex items-center gap-2">
+              <span className="rec-dot inline-block h-2 w-2 rounded-full bg-[#f87171]" />
+              <span className="font-hud text-[11px] tracking-[0.15em] text-white/90">
+                {robot.id}-CAM0{robot.cam + 1} · {CAM_NAMES[robot.cam]}
+              </span>
+            </div>
+            <span className="font-hud text-[11px] tracking-wider text-white/70">{ts}</span>
+          </div>
+
+          {/* 底部信息条 */}
+          <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/70 to-transparent px-3 pb-2 pt-4">
+            <span className="font-hud text-[10px] tracking-[0.15em] text-white/60">
+              SIG {Math.round(robot.signal)}dBm · 1080P
+            </span>
+            <span
+              className={`font-hud text-[10px] tracking-[0.15em] ${
+                mode === "webrtc" ? "text-[#34d399]" : "text-[#fbbf24]"
+              }`}
+            >
+              {modeLabel}
+            </span>
+          </div>
+        </div>
+      )}
+    </Zoomable>
   );
 }

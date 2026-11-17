@@ -136,8 +136,12 @@ local_costmap:
           obstacle_min_range: 0.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        # 必须大于 robot_radius(0.35)：0.35~0.60 之间是渐变软代价，
-        # 机器人贴墙停稳时脚下格不再是致命 254，规划器才能起飞
+        # 必须大于 robot_radius(0.35)：0.35~0.70 之间是渐变软代价，
+        # 机器人贴墙停稳时脚下格不再是致命 254，规划器才能起飞。
+        # 【实测结论】曾把 inflation_radius 加到 0.70、cost_scaling 降到 2.0
+        # 想让路径远离墙面，结果货架缝/墙洞（净宽 1.6 m）在代价图里被堵死，
+        # 巡逻航点全线 error 208 规划失败。0.60 是这台机器狗（半径 0.35）
+        # 能过窄通道的上限，不要再放大。
         cost_scaling_factor: 3.0
         inflation_radius: 0.60
       always_send_full_costmap: true
@@ -182,8 +186,12 @@ global_costmap:
           obstacle_min_range: 0.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        # 必须大于 robot_radius(0.35)：0.35~0.60 之间是渐变软代价，
-        # 机器人贴墙停稳时脚下格不再是致命 254，规划器才能起飞
+        # 必须大于 robot_radius(0.35)：0.35~0.70 之间是渐变软代价，
+        # 机器人贴墙停稳时脚下格不再是致命 254，规划器才能起飞。
+        # 【实测结论】曾把 inflation_radius 加到 0.70、cost_scaling 降到 2.0
+        # 想让路径远离墙面，结果货架缝/墙洞（净宽 1.6 m）在代价图里被堵死，
+        # 巡逻航点全线 error 208 规划失败。0.60 是这台机器狗（半径 0.35）
+        # 能过窄通道的上限，不要再放大。
         cost_scaling_factor: 3.0
         inflation_radius: 0.60
       always_send_full_costmap: true

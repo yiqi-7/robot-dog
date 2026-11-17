@@ -51,13 +51,24 @@
 #include <nlohmann/json.hpp>
 
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp_action/rclcpp_action.hpp>
 #include <geometry_msgs/msg/twist.hpp>
+#include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
+#include <nav2_msgs/action/navigate_to_pose.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 
 using json = nlohmann::json;
 using namespace std::chrono_literals;
+
+// Nav2 的导航动作：派单统一走它，由 Nav2 负责全局/局部规划与避障。
+// 【历史教训】早期版本自己算差角直接发 cmd_vel（纯"朝目标直走"），
+// 没有规划与避障，机器人在配电室墙角一头顶住墙、关节速度打满限幅值，
+// 表现为"卡住不动"。改用 Nav2 后由代价地图绕开障碍。
+using NavigateToPose = nav2_msgs::action::NavigateToPose;
+using NavGoalHandle = rclcpp_action::ClientGoalHandle<NavigateToPose>;
 
 namespace {
 
@@ -115,15 +126,15 @@ const std::vector<SitePoint> kPoints = {
   {"warehouse-dock",  "仓库-月台",     8.5, -1.5, "warehouse",  nullptr},
   {"a-line-1",        "车间A-1号产线", -7.0, -3.7, "workshop-a", nullptr},
   {"a-line-2",        "车间A-2号产线", -3.5, -3.7, "workshop-a", nullptr},
-  {"a-west-gate",     "车间A-西门",    -7.8, -1.2, "workshop-a", nullptr},  // 内缩：原 -8.5 超地图西界
+  {"a-west-gate",     "车间A-西门",    -8.47, -1.16, "workshop-a", nullptr},
   {"b-assembly",      "车间B-装配台",  -7.5,  3.8, "workshop-b", nullptr},
   {"b-east-gate",     "车间B-东门",    -2.5,  3.0, "workshop-b", nullptr},
   {"power-room",      "配电室",         7.1,  2.6, "power",      nullptr},
-  {"boiler",          "锅炉房",         5.2,  4.4, "control",    nullptr},  // 内缩：原 5.5 超地图北界
-  {"charger-1",       "充电区-1号桩",   1.9,  4.2, "charging",   "charger"},  // 内缩：原 4.9 超北界 4.73
-  {"charger-2",       "充电区-2号桩",   3.2,  4.2, "charging",   "charger"},  // 内缩：同上
-  {"control-room",    "中控室",         7.1,  4.4, "control",    nullptr},  // 内缩：原 6.3 超北界
-  {"north-gate",      "厂区北门",       0.0,  4.4, nullptr,      nullptr},  // 内缩：原 6.4 超北界
+  {"boiler",          "锅炉房",         5.17, 5.35, "control",    nullptr},
+  {"charger-1",       "充电区-1号桩",   1.9,  4.9, "charging",   "charger"},
+  {"charger-2",       "充电区-2号桩",   3.2,  4.9, "charging",   "charger"},
+  {"control-room",    "中控室",         7.44, 5.87, "control",    nullptr},
+  {"north-gate",      "厂区北门",       0.0,  6.4, nullptr,      nullptr},
   {"ring-road",       "厂区环路",       0.0, -6.3, nullptr,      nullptr},
 };
 
@@ -200,6 +211,19 @@ public:
       });
 
     pub_cmd_vel_ = create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 10);
+
+    // 派单导航走 Nav2 动作接口（规划 + 避障 + 可取消）
+    nav_client_ = rclcpp_action::create_client<NavigateToPose>(this, "navigate_to_pose");
+
+    // 初始位姿修正：AMCL 的 initial_pose 参数是固定值，但机器人每次停下位置
+    // 都不同（上一轮任务结束在哪、世界是否复用），固定值会让粒子滤波收敛到
+    // 错误位置（实测偏 2 m，代价图与真实环境错位 → 规划贴墙顶死）。
+    // 因此启动后拿第一条 /odom 的真实位姿，主动发一次 /initialpose 对齐。
+    pub_initial_pose_ = create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>(
+      "initialpose", 10);
+
+    // 派单与巡逻互斥：派单时暂停巡逻，任务结束后恢复
+    pub_patrol_enable_ = create_publisher<std_msgs::msg::Bool>("/patrol/enable", 10);
 
     // ---------------- MQTT ----------------
     initMqtt();
@@ -400,19 +424,33 @@ private:
     if (action == "estop") {
       geometry_msgs::msg::Twist stop;
       self->pub_cmd_vel_->publish(stop);
-      std::lock_guard<std::mutex> lk(self->data_mutex_);
-      self->navigating_ = false;
-      self->status_ = "fault";
-      self->task_.clear();
+      // 急停必须同时撤销导航目标，否则 Nav2 会立刻重新下发速度指令
+      self->cancelNavigation("急停");
+      {
+        std::lock_guard<std::mutex> lk(self->data_mutex_);
+        self->status_ = "fault";
+        self->task_.clear();
+      }
       RCLCPP_WARN(self->get_logger(), "执行紧急停止 (ESTOP)");
+      return;
+    }
+
+    // ---- 取消任务（看板"取消"按钮）----
+    // 早期版本没有这个分支，看板点取消只会得到"未知指令"，导航目标继续
+    // 执行导致机器人顶着墙一直推。必须有。
+    if (action == "cancel") {
+      self->cancelNavigation("看板取消");
       return;
     }
 
     // ---- 复位 ----
     if (action == "resume") {
-      std::lock_guard<std::mutex> lk(self->data_mutex_);
-      self->status_ = "idle";
-      self->navigating_ = false;
+      {
+        std::lock_guard<std::mutex> lk(self->data_mutex_);
+        self->status_ = "idle";
+        self->navigating_ = false;
+      }
+      self->pausePatrol(false);
       RCLCPP_INFO(self->get_logger(), "故障已复位");
       return;
     }
@@ -478,64 +516,164 @@ private:
       task_ = title.empty() ? std::string("前往 ") + found->name : title;
       nav_start_time_ = now();
     }
+    // 派单接管控制权：先让巡逻停手，否则两个节点同时发导航目标互相打断
+    pausePatrol(true);
     RCLCPP_INFO(get_logger(), "开始前往 [%s] %s  目标=(%.2f, %.2f) 任务#%d",
       found->id, found->name, found->x, found->y, task_id);
+
+    sendNavGoal(found->x, found->y, found->name);
   }
 
   // =========================================================================
-  // 行驶控制（20 Hz）：朝目标点走，到点停车
+  // 下发 Nav2 导航目标（map 坐标系）
+  // =========================================================================
+  void sendNavGoal(double x, double y, const std::string & name)
+  {
+    if (!nav_client_->wait_for_action_server(2s)) {
+      RCLCPP_WARN(get_logger(), "Nav2 action server 未就绪，目标暂未下发（稍后重试）");
+      // 保留 navigating_=true，由 onNavTimer 的超时逻辑兜底重试/放弃
+      return;
+    }
+
+    NavigateToPose::Goal goal;
+    goal.pose.header.frame_id = "map";
+    goal.pose.header.stamp = now();
+    goal.pose.pose.position.x = x;
+    goal.pose.pose.position.y = y;
+    goal.pose.pose.position.z = 0.0;
+    goal.pose.pose.orientation.w = 1.0;   // 不约束最终朝向，到位即可
+
+    auto options = rclcpp_action::Client<NavigateToPose>::SendGoalOptions();
+    options.goal_response_callback =
+      [this, name](const NavGoalHandle::SharedPtr & handle) {
+        if (!handle) {
+          RCLCPP_WARN(get_logger(), "Nav2 拒绝了目标 %s（可能不在代价地图可通行区）", name.c_str());
+          finishTask("（目标被拒绝）");
+          return;
+        }
+        std::lock_guard<std::mutex> lk(data_mutex_);
+        nav_goal_ = handle;
+        RCLCPP_INFO(get_logger(), "Nav2 已接受目标 %s", name.c_str());
+      };
+    options.result_callback =
+      [this, name](const NavGoalHandle::WrappedResult & result) {
+        if (result.code == rclcpp_action::ResultCode::SUCCEEDED) {
+          RCLCPP_INFO(get_logger(), "任务完成：已到达 %s", name.c_str());
+          finishTask(name);
+        } else if (result.code == rclcpp_action::ResultCode::CANCELED) {
+          RCLCPP_INFO(get_logger(), "导航已取消（%s）", name.c_str());
+          finishTask("已取消");
+        } else {
+          RCLCPP_WARN(get_logger(), "导航失败（%s），Nav2 将自行尝试恢复行为", name.c_str());
+          finishTask("（导航失败）");
+        }
+      };
+    nav_client_->async_send_goal(goal, options);
+  }
+
+  // 结束当前任务：清状态、停车、恢复巡逻
+  void finishTask(const std::string & detail)
+  {
+    {
+      std::lock_guard<std::mutex> lk(data_mutex_);
+      navigating_ = false;
+      status_ = "idle";
+      task_.clear();
+      nav_goal_.reset();
+    }
+    pub_cmd_vel_->publish(geometry_msgs::msg::Twist());   // 确保停车
+    pausePatrol(false);
+    (void)detail;
+  }
+
+  // 取消当前导航目标（看板"取消"按钮 / 急停都走这里）
+  void cancelNavigation(const char * reason)
+  {
+    std::shared_ptr<NavGoalHandle> handle;
+    {
+      std::lock_guard<std::mutex> lk(data_mutex_);
+      handle = nav_goal_;
+    }
+    if (handle) {
+      nav_client_->async_cancel_goal(handle);
+      RCLCPP_WARN(get_logger(), "取消导航目标（%s）", reason);
+    } else {
+      RCLCPP_INFO(get_logger(), "当前无导航目标可取消（%s）", reason);
+    }
+    finishTask("已取消");
+  }
+
+
+  // =========================================================================
+  // 巡视定时器（20 Hz）：初始位姿对齐 + 任务超时兜底
+  //
+  // 注意：这里【不再】直接发 cmd_vel 驱动轮子。行驶由 Nav2 的
+  // controller_server 负责（它会看局部代价地图绕障），本函数只做状态维护。
   // =========================================================================
   void onNavTimer()
   {
-    geometry_msgs::msg::Twist cmd;
-    bool finished = false;
-    std::string finished_name;
-
-    {
-      std::lock_guard<std::mutex> lk(data_mutex_);
-      if (!navigating_ || !odom_ok_) return;
-
-      if ((now() - nav_start_time_).seconds() > nav_timeout_s_) {
-        navigating_ = false;
-        status_ = "idle";
-        task_.clear();
-        finished = true;
-        finished_name = nav_target_name_ + "（超时放弃）";
-      } else {
-        const double dx = nav_target_x_ - pos_x_;
-        const double dy = nav_target_y_ - pos_y_;
-        const double dist = std::hypot(dx, dy);
-
-        if (dist < nav_tolerance_) {
-          navigating_ = false;
-          status_ = "idle";
-          task_.clear();
-          finished = true;
-          finished_name = nav_target_name_;
-        } else {
-          // 差角 = 目标方位 - 当前朝向
-          const double err = wrapPi(std::atan2(dy, dx) - heading_);
-          // 朝向偏差大时先原地转，偏差小再边走边修
-          if (std::abs(err) > 0.8) {
-            cmd.linear.x = 0.0;
-            cmd.angular.z = std::clamp(2.0 * err, -0.8, 0.8);
-          } else {
-            const double v = nav_speed_ * std::max(0.25, std::cos(err)) *
-                             std::min(1.0, dist / 1.0);   // 接近目标时减速
-            cmd.linear.x = std::clamp(v, 0.0, nav_speed_);
-            cmd.angular.z = std::clamp(2.0 * err, -0.8, 0.8);
-          }
-        }
+    // ① 启动后补发一次 AMCL 初始位姿（见构造函数注释）
+    if (!initial_pose_sent_ && odom_ok_) {
+      if ((now() - start_time_).seconds() > 8.0) {
+        publishInitialPose();
+        initial_pose_sent_ = true;
       }
-    }
-
-    if (finished) {
-      pub_cmd_vel_->publish(geometry_msgs::msg::Twist());   // 停车
-      RCLCPP_INFO(get_logger(), "任务完成：已到达 %s", finished_name.c_str());
       return;
     }
-    pub_cmd_vel_->publish(cmd);
+
+    // ② 任务超时兜底：Nav2 长时间无结果时主动取消，避免"永远 working"
+    bool timeout = false;
+    std::string name;
+    {
+      std::lock_guard<std::mutex> lk(data_mutex_);
+      if (!navigating_) return;
+      if ((now() - nav_start_time_).seconds() > nav_timeout_s_) {
+        timeout = true;
+        name = nav_target_name_;
+      }
+    }
+    if (timeout) {
+      RCLCPP_WARN(get_logger(), "任务超时（%.0f s）自动取消：%s",
+        nav_timeout_s_, name.c_str());
+      cancelNavigation("超时");
+    }
   }
+
+  // 用当前里程计位姿对齐 AMCL，消除初始定位偏差
+  void publishInitialPose()
+  {
+    geometry_msgs::msg::PoseWithCovarianceStamped msg;
+    msg.header.frame_id = "map";
+    msg.header.stamp = now();
+    {
+      std::lock_guard<std::mutex> lk(data_mutex_);
+      msg.pose.pose.position.x = pos_x_;
+      msg.pose.pose.position.y = pos_y_;
+      msg.pose.pose.position.z = 0.0;
+      // 朝向：由 yaw 还原四元数（只用 z/w 分量）
+      msg.pose.pose.orientation.z = std::sin(heading_ * 0.5);
+      msg.pose.pose.orientation.w = std::cos(heading_ * 0.5);
+    }
+    // 协方差：位置 0.25 m²、朝向 0.07 rad²，给粒子滤波合理的初始散布
+    msg.pose.covariance = {0.25, 0, 0, 0, 0, 0,
+                           0, 0.25, 0, 0, 0, 0,
+                           0, 0, 0.06, 0, 0, 0,
+                           0, 0, 0, 0.02, 0, 0,
+                           0, 0, 0, 0, 0.02, 0,
+                           0, 0, 0, 0, 0, 0.07};
+    pub_initial_pose_->publish(msg);
+    RCLCPP_INFO(get_logger(), "已按里程计对齐 AMCL 初始位姿 (%.2f, %.2f)",
+      msg.pose.pose.position.x, msg.pose.pose.position.y);
+  }
+
+  // 巡逻开关：派单期间暂停巡逻，避免两个节点抢同一个导航通道
+  void pausePatrol(bool paused)
+  {
+    std_msgs::msg::Bool m;
+    m.data = !paused;
+    pub_patrol_enable_->publish(m);
+  }
+
 
   // =========================================================================
   // 状态上报（1 Hz）
@@ -627,6 +765,9 @@ private:
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_odom_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr sub_joint_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr pub_cmd_vel_;
+  rclcpp::Publisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr pub_initial_pose_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pub_patrol_enable_;
+  rclcpp_action::Client<NavigateToPose>::SharedPtr nav_client_;
   rclcpp::TimerBase::SharedPtr timer_state_, timer_nav_;
   rclcpp::Time start_time_, nav_start_time_;
 
@@ -642,6 +783,8 @@ private:
   bool navigating_ = false;
   double nav_target_x_ = 0.0, nav_target_y_ = 0.0;
   std::string nav_target_name_;
+  std::shared_ptr<NavGoalHandle> nav_goal_;   // 当前 Nav2 目标句柄（用于取消）
+  bool initial_pose_sent_ = false;            // 初始位姿是否已对齐
 
   // 定时器用的快照（避免持锁跨线程调用日志宏）
   bool connected_snapshot_ = false, odom_snapshot_ = false;
