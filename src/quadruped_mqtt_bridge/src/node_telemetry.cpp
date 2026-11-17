@@ -112,6 +112,11 @@
   // =========================================================================
   void MqttBridgeNode::onPublishTimer()
   {
+    // 执行端心跳丢失 → 立刻告警（机器人可能仍在执行，但已无人监管）
+    if (heartbeat_seen_ && (now() - last_heartbeat_).seconds() > 4.0 &&
+      eventAllowed("heartbeat_lost", 60.0)) {
+      publishEvent("critical", "任务执行端（task_runner）心跳丢失超 4s，机器人执行已失去监管");
+    }
     json state;
     // 日志快照（避免在锁外读共享成员，同时保留"不持锁打日志"的原意）
     std::string log_status;

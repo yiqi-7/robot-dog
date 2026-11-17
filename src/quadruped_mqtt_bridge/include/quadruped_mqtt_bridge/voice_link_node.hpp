@@ -67,7 +67,7 @@ public:
   std::string broker_host_, robot_id_, robot_name_;
   std::string topic_prefix_, username_, password_;
   std::string audio_topic_, tts_topic_;
-  int broker_port_ = 1883, keepalive_ = 45;
+  int broker_port_ = 1883, keepalive_ = 10;   // 10s：LWT 掉线判定窗口 ≈ 15s
 
   struct mosquitto *mosq_ = nullptr;
 

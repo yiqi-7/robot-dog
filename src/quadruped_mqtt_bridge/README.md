@@ -98,3 +98,22 @@ sudo apt install libmosquitto-dev nlohmann-json3-dev libopencv-dev
 
 见 `quadruped-ops/MQTT-INTERFACE.md`（连接/主题/编码）与
 `quadruped-ops/VOICE-INTERFACE.md`（语音 §3.1 上行 / §3.2 播报 / §5 确认）。
+
+## 执行安全（watchdog / 门禁）
+
+速度链：`controller_server → cmd_vel_nav → smoother → cmd_vel_smoothed →
+collision_monitor → cmd_vel_in → deadman_guard → cmd_vel → 底盘`。
+
+| 机制 | 位置 | 行为 |
+| --- | --- | --- |
+| 急停闩锁 | task_runner | estop 后置位，拒绝一切 assign；只有 resume 解除 |
+| 派单幂等 | task_runner | 同一 task id 执行中/已有终态 → 忽略（QoS1 重传、看板连点） |
+| 单任务互斥 | task_runner | 有任务在执行时拒绝新派单并上报 warn 事件 |
+| 取消校验 | task_runner | cancel 带 id 时必须与在执行任务一致，避免误停别的任务 |
+| 非法目标 | task_runner | 目标不在点位表 → 拒绝 + event(warn) + 回写 revoked |
+| **心跳看门狗** | deadman_guard | 订阅 `safety/heartbeat`(1Hz)；心跳超 3s → 切断速度链路并持续发零速，恢复自动放行 |
+| 执行层兜底 | gait_controller | 同一心跳逻辑（trot 直驱模式下生效，与上一行互为冗余） |
+| 掉线检测 | mqtt_bridge | keepalive 10s（LWT ≈ 15s 内可见），三节点均 10s |
+
+`deadman_guard` 存在的理由：task_runner 是唯一持有 Nav2 动作客户端的执行端，
+它崩溃后 Nav2 服务器仍会继续发布速度指令——最终执行层必须有自己的停机手段。

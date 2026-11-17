@@ -278,6 +278,16 @@ def launch_setup(context, *args, **kwargs):
         parameters=mqtt_params(),
     )
 
+    # 执行安全看门狗：task_runner 心跳断 → 切断 Nav2→底盘速度链路（见 deadman_guard.cpp）
+    # 它不依赖 broker，纯 ROS 内部，是"执行端死亡机器人仍在走"的兜底
+    deadman_guard = Node(
+        package="quadruped_mqtt_bridge",
+        executable="deadman_guard",
+        name="deadman_guard",
+        output="screen",
+        parameters=[{"use_sim_time": use_sim_time, "hb_timeout": 3.0}],
+    )
+
     # 多航点巡逻节点（航点参数可配，默认工厂环线）
     # patrol:=false 时不启动巡逻（补扫/单点导航/语音测试用，否则 30 s 后
     # 它会自己把机器人开走，毁掉定位对齐）
@@ -431,7 +441,7 @@ def launch_setup(context, *args, **kwargs):
         robot_state_publisher,
         gz_sim,
         TimerAction(period=3.0, actions=[spawn]),
-        TimerAction(period=5.0, actions=[bridge, gait, odom, camera_info, rgb_camera_info, image_sender, mqtt_bridge, task_runner, voice_link]),
+        TimerAction(period=5.0, actions=[bridge, gait, odom, camera_info, rgb_camera_info, image_sender, mqtt_bridge, task_runner, voice_link, deadman_guard]),
         TimerAction(period=30.0, actions=[patrol_node]),
         # CHAMP 依赖 gz 桥接（/joint_states 与 cmd_pos 都要通），放到 8 秒起
         TimerAction(period=8.0, actions=[champ_launch]),

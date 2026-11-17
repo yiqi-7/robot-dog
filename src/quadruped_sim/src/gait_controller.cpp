@@ -41,6 +41,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "std_msgs/msg/float64.hpp"
+#include "std_msgs/msg/string.hpp"
 
 class GaitController : public rclcpp::Node
 {
@@ -101,6 +102,12 @@ public:
         wz_cmd_ = clamp(msg->twist.angular.z, -max_ang_, max_ang_);
         last_cmd_time_ = now();
       });
+    // 执行端心跳：task_runner 崩溃后 Nav2 仍会持续发 cmd_vel，只看 cmd_vel 超时停不下来。
+    // 心跳中断 → 本层（最终执行层）强制归零，是"控制端死亡机器人仍在走"的兜底。
+    sub_hb_ = create_subscription<std_msgs::msg::String>(
+      "safety/heartbeat", 10,
+      [this](std_msgs::msg::String::SharedPtr) { last_hb_ = now(); hb_seen_ = true; });
+
     // /odom 提供机身实测速度，用于闭环制动与转向刚度
     sub_odom_ = create_subscription<nav_msgs::msg::Odometry>(
       "odom", 10,
@@ -191,6 +198,22 @@ private:
   // 指令超时看门狗：指令流中断后自动归零，防止带着旧指令自己跑
   void watchdog()
   {
+    // 心跳看门狗：执行端失联 → 放弃外部指令（Nav2 继续发速度也没用）
+    if (hb_seen_ && (now() - last_hb_).seconds() > hb_timeout_) {
+      if (!hb_tripped_) {
+        RCLCPP_ERROR(get_logger(),
+          "执行端心跳丢失 >%.0fs，看门狗强制停车（忽略并清空外部 cmd_vel）", hb_timeout_);
+        hb_tripped_ = true;
+      }
+      vx_cmd_ = 0.0;
+      wz_cmd_ = 0.0;
+      last_cmd_time_ = now();   // 让 cmd_vel 超时逻辑保持"已归零"状态
+      return;
+    }
+    if (hb_tripped_ && (now() - last_hb_).seconds() <= hb_timeout_) {
+      RCLCPP_WARN(get_logger(), "执行端心跳恢复，看门狗解除");
+      hb_tripped_ = false;
+    }
     if (last_cmd_time_.nanoseconds() == 0) {
       return;
     }
@@ -347,6 +370,11 @@ private:
   double l1_, l2_, foot_x_, foot_y_;
   double stride_gain_, turn_gain_, max_lin_, max_ang_;
   double cmd_timeout_, kv_gain_, kw_gain_;
+  // 心跳看门狗（3s：task_runner 1Hz 心跳，连丢 3 帧判失联）
+  double hb_timeout_ = 3.0;
+  bool hb_seen_ = false, hb_tripped_ = false;
+  rclcpp::Time last_hb_{0, 0, RCL_ROS_TIME};
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_hb_;
   double turn_freq_scale_, turn_amp_boost_;
   double soft_start_s_{2.5};
   rclcpp::Time start_time_{0, 0, RCL_ROS_TIME};

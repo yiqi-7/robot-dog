@@ -19,7 +19,7 @@ VoiceLinkNode::VoiceLinkNode() : rclcpp::Node("voice_link")
   robot_id_      = declare_parameter("robot_id", "robot-01");
   robot_name_    = declare_parameter("robot_name", "仿真狗");
   topic_prefix_  = declare_parameter("topic_prefix", "qbot/v1");
-  keepalive_     = declare_parameter("keepalive", 45);
+  keepalive_     = declare_parameter("keepalive", 10);   // 与 mqtt_bridge 一致，掉线窗口 ≈ 15s
   username_      = declare_parameter("username", "");
   password_      = declare_parameter("password", "");
 

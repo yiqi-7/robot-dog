@@ -18,6 +18,8 @@
   {
     if (target_id.empty()) {
       RCLCPP_WARN(get_logger(), "任务未指定目标点，忽略");
+      publishEvent("warn", "任务缺少目标点，已拒绝执行");
+      writeBackTask(task_id, "revoked");
       return;
     }
     // 点位表在 site_map.hpp（与 mqtt_bridge 发布的看板地图同源，不会漂移）：
@@ -25,6 +27,12 @@
     const qmb::SitePoint *found = qmb::findSitePoint(target_id);
     if (!found) {
       RCLCPP_WARN(get_logger(), "未知目标点 '%s'，可用点位见启动日志", target_id.c_str());
+      // 安全要求：非法目标必须"拒绝 + 留痕"，不能静默忽略（看板否则无从得知）
+      char buf[192];
+      std::snprintf(buf, sizeof(buf), "任务#%d 目标 '%s' 不在点位表，已拒绝执行",
+        task_id, target_id.c_str());
+      publishEvent("warn", buf);
+      writeBackTask(task_id, "revoked");
       return;
     }
 

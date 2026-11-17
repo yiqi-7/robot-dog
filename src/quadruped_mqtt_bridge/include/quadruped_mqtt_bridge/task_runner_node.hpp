@@ -118,7 +118,7 @@ public:
   std::string broker_host_, robot_id_, robot_name_;
   std::string topic_prefix_, username_, password_;
   std::string cmd_topic_, fleet_tasks_topic_, event_topic_;
-  int broker_port_ = 1883, keepalive_ = 45;
+  int broker_port_ = 1883, keepalive_ = 10;   // 10s：LWT 掉线判定窗口 ≈ 15s
 
   // 告警号段：与 mqtt_bridge 共用 alarm_base_id 基址，本节点偏移 10 万，
   // 两个节点的 alarmId 不会撞（看板按 alarmId 去重/排序）。
@@ -142,6 +142,9 @@ public:
   rclcpp::Publisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr pub_initial_pose_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pub_patrol_enable_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub_task_state_;
+  // 心跳看门狗用：执行端存活信号（1Hz），执行端崩溃时下游据此停机
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub_heartbeat_;
+  rclcpp::TimerBase::SharedPtr timer_hb_;
   rclcpp_action::Client<NavigateToPose>::SharedPtr nav_client_;
   rclcpp::TimerBase::SharedPtr timer_nav_;
   rclcpp::Time start_time_, nav_start_time_;
@@ -155,6 +158,8 @@ public:
 
   // 导航状态
   bool navigating_ = false;
+  // 急停闩锁：急停后拒绝一切新的派单，只有 resume 解除（防止"急停后被派单"）
+  bool estop_latched_ = false;
   double nav_target_x_ = 0.0, nav_target_y_ = 0.0;
   std::string nav_target_name_;
   std::shared_ptr<NavGoalHandle> nav_goal_;   // 当前 Nav2 目标句柄（用于取消）

@@ -23,7 +23,7 @@ MqttBridgeNode::MqttBridgeNode() : rclcpp::Node("mqtt_bridge")
   robot_model_   = declare_parameter("robot_model", "quadruped-sim");
   topic_prefix_  = declare_parameter("topic_prefix", "qbot/v1");
   publish_hz_    = declare_parameter("publish_hz", 1.0);
-  keepalive_     = declare_parameter("keepalive", 45);
+  keepalive_     = declare_parameter("keepalive", 10);   // 掉线检测窗口 ≈ 1.5×
   username_      = declare_parameter("username", "");
   password_      = declare_parameter("password", "");
   battery_       = declare_parameter("battery_init", 100.0);
@@ -86,6 +86,13 @@ MqttBridgeNode::MqttBridgeNode() : rclcpp::Node("mqtt_bridge")
   // 任务状态：拆节点后任务归属 task_runner，但 state 报文的 status/currentTask
   // 必须照样反映"正在执行什么"。这是拆分后唯一的跨节点内部话题（不是 MQTT 契约）。
   // 用 transient_local（latched）：mqtt_bridge 比 task_runner 晚起也能拿到上一帧。
+  sub_heartbeat_ = create_subscription<std_msgs::msg::String>(
+    "safety/heartbeat", 10,
+    [this](std_msgs::msg::String::SharedPtr) {
+      last_heartbeat_ = now();
+      heartbeat_seen_ = true;
+    });
+
   sub_task_state_ = create_subscription<std_msgs::msg::String>(
     "task_runner/state", rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable(),
     [this](std_msgs::msg::String::SharedPtr msg) {

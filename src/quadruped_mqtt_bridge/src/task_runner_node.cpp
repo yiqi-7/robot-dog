@@ -17,7 +17,7 @@ TaskRunnerNode::TaskRunnerNode() : rclcpp::Node("task_runner")
   robot_id_      = declare_parameter("robot_id", "robot-01");
   robot_name_    = declare_parameter("robot_name", "仿真狗");
   topic_prefix_  = declare_parameter("topic_prefix", "qbot/v1");
-  keepalive_     = declare_parameter("keepalive", 45);
+  keepalive_     = declare_parameter("keepalive", 10);   // 与 mqtt_bridge 一致，掉线窗口 ≈ 15s
   username_      = declare_parameter("username", "");
   password_      = declare_parameter("password", "");
 
@@ -80,6 +80,7 @@ TaskRunnerNode::TaskRunnerNode() : rclcpp::Node("task_runner")
   // latched：mqtt_bridge 晚起也能拿到上一帧，不会一开机就显示 idle。
   pub_task_state_ = create_publisher<std_msgs::msg::String>(
     "task_runner/state", rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
+  pub_heartbeat_ = create_publisher<std_msgs::msg::String>("safety/heartbeat", 10);
 
   // 派单导航走 Nav2 动作接口（规划 + 避障 + 可取消）
   nav_client_ = rclcpp_action::create_client<NavigateToPose>(this, "navigate_to_pose");
@@ -89,6 +90,12 @@ TaskRunnerNode::TaskRunnerNode() : rclcpp::Node("task_runner")
 
   // ---------------- 定时器：20 Hz 任务维护（初始位姿 / 超时兜底） ----------------
   timer_nav_ = create_wall_timer(50ms, [this]() { onNavTimer(); });
+  // 1Hz 心跳：与任务状态无关，始终发。执行端一旦崩溃，下游看门狗据此停机
+  timer_hb_ = create_wall_timer(1s, [this]() {
+    std_msgs::msg::String m;
+    m.data = std::to_string(qmb::wallClockMs());
+    pub_heartbeat_->publish(m);
+  });
 
   // 开机先发一帧 idle，让 mqtt_bridge 立刻有任务状态可用
   publishTaskState();
@@ -254,6 +261,8 @@ void TaskRunnerNode::handleCmd(const std::string &text)
       std::lock_guard<std::mutex> lk(data_mutex_);
       status_ = "fault";
       task_.clear();
+      // 闩锁：急停期间拒绝新的派单（测试发现"急停后仍被派单并继续走"）
+      estop_latched_ = true;
     }
     publishTaskState();     // 让 state 报文立刻变 fault
     RCLCPP_WARN(get_logger(), "执行紧急停止 (ESTOP)：已向 /cmd_vel 发布零速并撤销导航目标");
@@ -265,6 +274,17 @@ void TaskRunnerNode::handleCmd(const std::string &text)
   // 早期版本没有这个分支，看板点取消只会得到"未知指令"，导航目标继续
   // 执行导致机器人顶着墙一直推。必须有。
   if (action == "cancel") {
+    // 带 id 的取消必须与"正在执行的任务"一致：否则看板上取消旧任务会误停新任务
+    const int want = j.value("id", j.value("taskId", 0));
+    int cur = 0;
+    {
+      std::lock_guard<std::mutex> lk(data_mutex_);
+      cur = active_task_id_;
+    }
+    if (want != 0 && cur != 0 && want != cur) {
+      RCLCPP_WARN(get_logger(), "取消请求 id=%d 与正在执行 #%d 不符，忽略", want, cur);
+      return;
+    }
     cancelNavigation("看板取消");
     return;
   }
@@ -276,6 +296,7 @@ void TaskRunnerNode::handleCmd(const std::string &text)
       status_ = "idle";
       navigating_ = false;
       task_.clear();
+      estop_latched_ = false;   // 只有 resume 能解除急停闩锁
     }
     publishTaskState();
     pausePatrol(false);
@@ -301,6 +322,50 @@ void TaskRunnerNode::handleCmd(const std::string &text)
       target_id = j.value("target", "");
       title     = j.value("title", "");
       task_id   = j.value("taskId", 0);
+    }
+    // ---- 安全门禁（顺序：急停闩锁 → 幂等 → 单任务互斥）----
+    {
+      bool latched = false, dup = false, busy = false;
+      std::string dup_status;
+      int cur = 0;
+      {
+        std::lock_guard<std::mutex> lk(data_mutex_);
+        latched = estop_latched_;
+        cur = active_task_id_;
+        if (task_id != 0) {
+          if (task_id == active_task_id_) {
+            dup = true;
+            dup_status = "执行中";
+          } else {
+            auto it = task_terminal_.find(task_id);
+            if (it != task_terminal_.end()) {
+              dup = true;
+              dup_status = it->second.first;
+            }
+          }
+        }
+        busy = (active_task_id_ != 0);
+      }
+      if (latched) {
+        char buf[160];
+        std::snprintf(buf, sizeof(buf), "急停闩锁中，拒绝任务#%d 派单（需先下发 resume）", task_id);
+        RCLCPP_WARN(get_logger(), "%s", buf);
+        publishEvent("warn", buf);
+        return;
+      }
+      // 幂等：QoS1 重传 / 看板连点 / 网关重发都是同一个 task id。
+      // 重复派单会给 Nav2 造成多个目标：旧目标不被取消 → 机器人继续走、取消也停不住。
+      if (dup) {
+        RCLCPP_WARN(get_logger(), "任务#%d 已%s，忽略重复派单", task_id, dup_status.c_str());
+        return;
+      }
+      if (busy) {
+        char buf[160];
+        std::snprintf(buf, sizeof(buf), "任务#%d 正在执行，拒绝任务#%d 派单", cur, task_id);
+        RCLCPP_WARN(get_logger(), "%s", buf);
+        publishEvent("warn", buf);
+        return;
+      }
     }
     startNavigation(target_id, title, task_id, task_obj);
     return;

@@ -132,7 +132,7 @@ public:
   std::string topic_prefix_, username_, password_;
   std::string state_topic_, map_topic_;
   std::string event_topic_;           // 多节点共同发布（见 README）
-  int broker_port_ = 1883, keepalive_ = 45;
+  int broker_port_ = 1883, keepalive_ = 10;   // 10s：LWT 掉线判定窗口 ≈ 15s
   double publish_hz_ = 1.0, battery_ = 100.0;
 
   // 告警阈值与 alarmId 分配器（阈值只影响本节点的遥测告警）
@@ -153,6 +153,10 @@ public:
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr sub_joint_;
   // task_runner 的任务状态（status/currentTask 跨节点来源）
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_task_state_;
+  // task_runner 心跳：用于执行端崩溃检测（看门狗）
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_heartbeat_;
+  rclcpp::Time last_heartbeat_{0, 0, RCL_ROS_TIME};
+  bool heartbeat_seen_ = false;
   rclcpp::TimerBase::SharedPtr timer_state_;
   rclcpp::Time start_time_;
 

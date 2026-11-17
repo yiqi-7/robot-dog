@@ -97,6 +97,11 @@ list(APPEND BUILT_TARGETS voice_link)
 # ---------------------------------------------------------------------------
 # voice_source：麦克风 VAD 分段 / WAV 样本 / 课程 ptt.sh → voice/audio_pcm
 # ---------------------------------------------------------------------------
+add_executable(deadman_guard src/deadman_guard.cpp)
+list(APPEND BUILT_TARGETS deadman_guard)
+target_link_libraries(deadman_guard rclcpp::rclcpp
+  ${geometry_msgs_TARGETS} ${std_msgs_TARGETS})
+
 add_executable(voice_source src/voice_source.cpp)
 target_link_libraries(voice_source
   rclcpp::rclcpp

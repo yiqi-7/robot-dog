@@ -272,9 +272,11 @@ collision_monitor:
     # 关键：速度指令输出到独立话题，避免与 controller 的 Twist 抢占 /cmd_vel
     enable_stamped_cmd_vel: false
     cmd_vel_in_topic: "cmd_vel_smoothed"
-    # 整条链的终点就是机器人速度指令 /cmd_vel（Twist），
+    # 输出改道 cmd_vel_in：由 deadman_guard 看门狗中继到 /cmd_vel。
+    # task_runner 心跳断 → 看门狗切断，防止执行端死亡后 Nav2 继续驱动底盘。
+    # 终点仍是机器人速度指令 /cmd_vel（经看门狗中继，Twist）。
     # CHAMP 与自研步态都从这里取速度
-    cmd_vel_out_topic: "cmd_vel"
+    cmd_vel_out_topic: "cmd_vel_in"
     frequency: 20.0
     observation_sources: ["scan"]
     scan:
