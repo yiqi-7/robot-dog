@@ -16,6 +16,8 @@
  *   MQTT_URL      默认 mqtt://localhost:1883
  *   TOPIC_PREFIX  默认 qbot/v1
  *   OLLAMA_URL    默认 http://localhost:11434
+ *   LLM_BACKEND   ollama（默认）| openai（llama.cpp server / vLLM 等兼容端点）
+ *   OPENAI_BASE_URL  openai 后端的基地址，默认 http://127.0.0.1:8081/v1
  *   VOICE_MODEL   默认 qwen2.5:3b
  *   ASR_MODEL_DIR 默认 ./models/sensevoice（需 model.onnx + tokens.txt）
  *   PENDING_TTL_MS 待确认指令超时（默认 10 分钟）
@@ -30,6 +32,10 @@ const MQTT_URL = process.env.MQTT_URL || "mqtt://localhost:1883";
 const P = process.env.TOPIC_PREFIX || "qbot/v1";
 const OLLAMA_URL = process.env.OLLAMA_URL || "http://localhost:11434";
 const VOICE_MODEL = process.env.VOICE_MODEL || "qwen2.5:1.5b";
+// LLM 后端：ollama（默认，/api/chat + format schema）| openai（/v1/chat/completions，
+// 供 llama.cpp server / vLLM / LM Studio 等兼容端点用）
+const LLM_BACKEND = (process.env.LLM_BACKEND || "ollama").toLowerCase();
+const OPENAI_BASE_URL = (process.env.OPENAI_BASE_URL || "http://127.0.0.1:8081/v1").replace(/\/$/, "");
 const ASR_MODEL_DIR = process.env.ASR_MODEL_DIR || path.join(process.cwd(), "models", "sensevoice");
 const PENDING_TTL_MS = Number(process.env.PENDING_TTL_MS || 10 * 60_000);
 const CLIP_DIR = process.env.VOICE_CLIP_DIR || path.join(process.cwd(), "voice-clips");
@@ -162,6 +168,31 @@ function audioStats(pcm, sampleRate, channels) {
 /* ---------------- LLM 解析（可选，Ollama） ---------------- */
 let llmAvailable = false;
 async function checkLlm() {
+  if (LLM_BACKEND === "openai") {
+    // OpenAI 兼容端点（llama.cpp server 等）：探 /models，命中即认为可用并预热
+    try {
+      const res = await fetch(`${OPENAI_BASE_URL}/models`, { signal: AbortSignal.timeout(3000) });
+      const j = await res.json();
+      const list = Array.isArray(j.data) ? j.data.map((m) => m.id ?? m.name) : [];
+      llmAvailable = list.length === 0 || list.some((m) => String(m).includes(VOICE_MODEL));
+      console.log(`[llm] OpenAI 兼容后端 ${llmAvailable ? `可用（${OPENAI_BASE_URL}，模型 ${VOICE_MODEL}）` : "已连接但模型不匹配"}`);
+      if (llmAvailable) {
+        console.log("[llm] 预热模型…");
+        const t0 = Date.now();
+        await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: VOICE_MODEL, messages: [{ role: "user", content: "ok" }], max_tokens: 4 }),
+          signal: AbortSignal.timeout(180_000),
+        });
+        console.log(`[llm] 预热完成（${((Date.now() - t0) / 1000).toFixed(1)}s）`);
+      }
+    } catch {
+      llmAvailable = false;
+      console.log(`[llm] OpenAI 兼容后端不可达（${OPENAI_BASE_URL}），使用规则解析兜底`);
+    }
+    return;
+  }
   try {
     const res = await fetch(`${OLLAMA_URL}/api/tags`, { signal: AbortSignal.timeout(3000) });
     const j = await res.json();
@@ -220,6 +251,27 @@ async function parseWithLlm(text, now) {
     `指令: "${text}"`,
   ].join("\n");
 
+  if (LLM_BACKEND === "openai") {
+    // OpenAI 兼容端点没有 ollama 的 format 约束，靠 prompt 收口 + 剥围栏
+    const res = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: VOICE_MODEL,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.1,
+        max_tokens: 220,
+      }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!res.ok) throw new Error(`openai 兼容端点 http ${res.status}`);
+    const j = await res.json();
+    let txt = j.choices?.[0]?.message?.content ?? "";
+    txt = txt.replace(/^\s*```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
+    const m = txt.match(/\{[\s\S]*\}/);          // 从回复里抠第一个 JSON 对象
+    if (!m) throw new Error(`LLM 未返回 JSON：${txt.slice(0, 80)}`);
+    return JSON.parse(m[0]);
+  }
   const res = await fetch(`${OLLAMA_URL}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -408,7 +460,7 @@ async function handleTranscript({ text, heardBy, source, cmdId, audioFile = null
   let parsed = null;
   if (llmAvailable) {
     try { parsed = await parseWithLlm(text, now); cmd.engine = "llm"; }
-    catch (e) { console.log(`[llm] 解析失败，转规则兜底：${e.message}`); }
+    catch (e) { console.log(`[llm:${LLM_BACKEND}] 解析失败，转规则兜底：${e.message}`); }
   }
   if (!parsed) parsed = parseWithRules(text, now);
   else {

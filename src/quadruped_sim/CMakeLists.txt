@@ -12,6 +12,7 @@ find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
+find_package(std_srvs REQUIRED)
 
 # ---------------------------------------------------------------------------
 # gait_controller：爬行步态控制器
@@ -67,7 +68,10 @@ target_link_libraries(image_sender
   ${OpenCV_LIBS}
   ${MOSQUITTO_LIBRARY}
 )
-set(BUILT_TARGETS champ_joint_relay patrol_node image_sender gait_controller odom_pub camera_info_pub)
+# 语音采集：麦克风/音频文件 -> voice/audio_pcm（mqtt_bridge 负责 §3.1 上行）
+add_executable(voice_source src/voice_source.cpp)
+target_link_libraries(voice_source rclcpp::rclcpp std_msgs::std_msgs std_srvs::std_srvs)
+set(BUILT_TARGETS champ_joint_relay patrol_node image_sender gait_controller odom_pub camera_info_pub voice_source)
 
 # ---------------------------------------------------------------------------
 # gz_window_minimize：把 Gazebo GUI 窗口最小化到任务栏

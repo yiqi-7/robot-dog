@@ -54,6 +54,7 @@
 
 #include <mosquitto.h>
 #include <nlohmann/json.hpp>
+#include <std_msgs/msg/u_int8_multi_array.hpp>
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
@@ -89,6 +90,27 @@ double wrapPi(double a)
 double yawFromQuat(double x, double y, double z, double w)
 {
   return std::atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z));
+}
+
+// Base64 编码（VOICE-INTERFACE.md §3.1 的 data 字段）。
+// 只有这一处用途，手写省一个依赖；每 3 字节 → 4 字符，末尾补 '='。
+std::string base64Encode(const uint8_t *data, size_t len)
+{
+  static const char kTab[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  std::string out;
+  out.reserve((len + 2) / 3 * 4);
+  for (size_t i = 0; i < len; i += 3) {
+    const uint32_t b0 = data[i];
+    const uint32_t b1 = (i + 1 < len) ? data[i + 1] : 0;
+    const uint32_t b2 = (i + 2 < len) ? data[i + 2] : 0;
+    const uint32_t v = (b0 << 16) | (b1 << 8) | b2;
+    out.push_back(kTab[(v >> 18) & 0x3F]);
+    out.push_back(kTab[(v >> 12) & 0x3F]);
+    out.push_back((i + 1 < len) ? kTab[(v >> 6) & 0x3F] : '=');
+    out.push_back((i + 2 < len) ? kTab[v & 0x3F] : '=');
+  }
+  return out;
 }
 
 // 当前墙上时钟的毫秒时间戳（Unix epoch ms）。
@@ -185,6 +207,12 @@ public:
     site_world_w_  = declare_parameter("site_world_width", 20.0);    // 仿真世界宽 m
     site_world_h_  = declare_parameter("site_world_height", 14.0);   // 仿真世界高 m
     publish_map_   = declare_parameter("publish_site_map", true);
+    // 语音链路（VOICE-INTERFACE.md §3.1/§3.2）。麦克风节点 → ROS → 这里上行，
+    // 不让采集节点单独连 MQTT：机器人端只维持一条连接，遗嘱/重连/背压都在这管。
+    voice_enabled_     = declare_parameter("voice_enabled", true);
+    audio_ros_topic_   = declare_parameter("audio_topic", "voice/audio_pcm");
+    audio_sample_rate_ = declare_parameter("audio_sample_rate", 16000);
+    audio_channels_    = declare_parameter("audio_channels", 1);
 
     // 前往目标点的行驶参数
     nav_speed_     = declare_parameter("nav_speed", 0.25);   // m/s
@@ -202,6 +230,8 @@ public:
 
     state_topic_ = topic_prefix_ + "/robots/" + robot_id_ + "/state";
     cmd_topic_   = topic_prefix_ + "/robots/" + robot_id_ + "/cmd";
+    audio_topic_ = topic_prefix_ + "/robots/" + robot_id_ + "/audio";
+    tts_topic_   = topic_prefix_ + "/robots/" + robot_id_ + "/tts";
     map_topic_   = topic_prefix_ + "/site/map";
     fleet_tasks_topic_ = topic_prefix_ + "/fleet/tasks";
     event_topic_       = topic_prefix_ + "/event";
@@ -248,6 +278,31 @@ public:
         task_ = "巡逻: " + patrol_status_;
       });
 
+    // ---------------- 语音上行（§3.1） ----------------
+    // voice_source 把"一句话"发成 16 kHz 单声道 PCM 片段，这里转成 §3.1 的
+    // JSON（base64）上行。格式信息走 latch 话题，采样率/声道以采集端为准，
+    // 避免桥这边参数写死和采集端不一致（曾经 16k/8k 错位导致 ASR 全是噪声）。
+    pub_tts_text_ = create_publisher<std_msgs::msg::String>("voice/tts_text", 10);
+    if (voice_enabled_) {
+      sub_audio_ = create_subscription<std_msgs::msg::UInt8MultiArray>(
+        audio_ros_topic_, rclcpp::QoS(10),
+        [this](std_msgs::msg::UInt8MultiArray::SharedPtr msg) { onAudioPcm(msg->data); });
+
+      sub_audio_info_ = create_subscription<std_msgs::msg::String>(
+        "voice/audio_info", rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable(),
+        [this](std_msgs::msg::String::SharedPtr msg) {
+          try {
+            const json j = json::parse(msg->data);
+            audio_sample_rate_ = j.value("sampleRate", audio_sample_rate_);
+            audio_channels_    = j.value("channels", audio_channels_);
+            RCLCPP_INFO(get_logger(), "语音格式：%d Hz / %d 声道",
+              audio_sample_rate_, audio_channels_);
+          } catch (const std::exception &) { /* 格式信息损坏就沿用默认值 */ }
+        });
+      RCLCPP_INFO(get_logger(), "语音上行已启用：ROS %s → MQTT %s",
+        audio_ros_topic_.c_str(), audio_topic_.c_str());
+    }
+
     pub_cmd_vel_ = create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 10);
 
     // 派单导航走 Nav2 动作接口（规划 + 避障 + 可取消）
@@ -284,12 +339,14 @@ public:
       "  任务主题   : %s（订阅 + 回写）\n"
       "  告警主题   : %s\n"
       "  地图主题   : %s（缩放 %.1f×，世界 %.0f×%.0f m）\n"
-      "  遗嘱消息   : 已注册",
+       "  语音上行   : %s → %s\n"
+       "  遗嘱消息   : 已注册",
       broker_host_.c_str(), broker_port_,
       robot_id_.c_str(), robot_name_.c_str(),
       state_topic_.c_str(), publish_hz_, cmd_topic_.c_str(),
       fleet_tasks_topic_.c_str(), event_topic_.c_str(),
-      map_topic_.c_str(), site_scale_, site_world_w_, site_world_h_);
+      map_topic_.c_str(), site_scale_, site_world_w_, site_world_h_,
+      voice_enabled_ ? audio_ros_topic_.c_str() : "未启用", audio_topic_.c_str());
   }
 
   ~MqttBridge() override
@@ -392,6 +449,14 @@ private:
         self->fleet_tasks_topic_.c_str());
     }
 
+    // 语音播报（§3.2）：网关把要念给机器人听的话发到 tts 主题
+    if (self->voice_enabled_) {
+      int rc_tts = mosquitto_subscribe(self->mosq_, nullptr, self->tts_topic_.c_str(), 1);
+      if (rc_tts == MOSQ_ERR_SUCCESS) {
+        RCLCPP_INFO(self->get_logger(), "已订阅语音播报 %s", self->tts_topic_.c_str());
+      }
+    }
+
     // 连接成功后把站点地图发布一次（retained），看板据此渲染厂区图
     if (self->publish_map_) self->publishSiteMap();
   }
@@ -467,6 +532,12 @@ private:
     // 看板每次增删改任务都会 retained 发布全量数组，这里存一份最新版本。
     if (msg->topic && self->fleet_tasks_topic_ == msg->topic) {
       self->onFleetTasks(text);
+      return;
+    }
+
+    // ---- 语音播报（§3.2）：念给机器人的话，转给 ROS 侧 ----
+    if (msg->topic && self->tts_topic_ == msg->topic) {
+      self->onTts(text);
       return;
     }
 
@@ -721,6 +792,58 @@ private:
     } else {
       RCLCPP_WARN(get_logger(), "告警上报失败: %s", mosquitto_strerror(rc));
     }
+  }
+
+  // =========================================================================
+  // 语音上行：PCM 片段 → {P}/robots/{id}/audio
+  // 报文格式见 VOICE-INTERFACE.md §3.1（QoS1，非 retained）
+  // =========================================================================
+  void onAudioPcm(const std::vector<uint8_t> &pcm)
+  {
+    if (!mqtt_connected_ || pcm.empty()) return;
+    const size_t bytes = pcm.size() - (pcm.size() % 2);   // 16bit 样本必须整对齐
+    if (bytes == 0) return;
+
+    const double dur = static_cast<double>(bytes) /
+                       (2.0 * audio_channels_ * audio_sample_rate_);
+    json j = {
+      {"robotId",    robot_id_},
+      {"ts",         wallClockMs()},
+      {"format",     "pcm_s16le"},
+      {"sampleRate", audio_sample_rate_},
+      {"channels",   audio_channels_},
+      {"data",       base64Encode(pcm.data(), bytes)},
+    };
+    const std::string payload = j.dump();
+    const int rc = mosquitto_publish(mosq_, nullptr, audio_topic_.c_str(),
+      static_cast<int>(payload.size()), payload.c_str(), 1, false);
+    if (rc == MOSQ_ERR_SUCCESS) {
+      RCLCPP_INFO(get_logger(), "语音已上行：%.2f s（%zu KB PCM → %zu KB base64）",
+        dur, bytes / 1024, payload.size() / 1024);
+    } else {
+      RCLCPP_WARN(get_logger(), "语音上行失败：%s", mosquitto_strerror(rc));
+    }
+  }
+
+  // =========================================================================
+  // 语音播报下行（§3.2）：仿真里没有喇叭，转成 ROS 话题让上层/TTS 节点处理
+  // =========================================================================
+  void onTts(const std::string &text)
+  {
+    std::string say = text;
+    std::string cmd_id;
+    try {
+      const json j = json::parse(text);
+      say = j.value("text", "");
+      cmd_id = j.value("cmdId", "");
+    } catch (const std::exception &) { /* 允许纯文本报文 */ }
+    if (say.empty()) return;
+
+    RCLCPP_INFO(get_logger(), "语音播报%s：%s",
+      cmd_id.empty() ? "" : (" [" + cmd_id + "]").c_str(), say.c_str());
+    std_msgs::msg::String m;
+    m.data = say;
+    pub_tts_text_->publish(m);
   }
 
   // 同类告警冷却：同一个 key 在 cooldown_s 内只报一次，避免每秒刷屏
@@ -1070,6 +1193,14 @@ private:
   std::string patrol_status_;
 
   struct mosquitto *mosq_ = nullptr;
+
+  // 语音（§3.1 上行 / §3.2 下行）
+  bool voice_enabled_ = true;
+  std::string audio_ros_topic_, audio_topic_, tts_topic_;
+  int audio_sample_rate_ = 16000, audio_channels_ = 1;
+  rclcpp::Subscription<std_msgs::msg::UInt8MultiArray>::SharedPtr sub_audio_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_audio_info_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub_tts_text_;
 
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_odom_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr sub_joint_;
