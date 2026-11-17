@@ -3,7 +3,7 @@
 <package format="3">
   <name>quadruped_sim</name>
   <version>0.1.0</version>
-  <description>四足机器人仿真：xacro 模型 + Gazebo 加载 + C++ 爬行步态控制 + SLAM/Nav2 导航</description>
+  <description>四足机器人仿真：xacro 模型 + Gazebo 加载 + C++ 爬行步态控制 + SLAM/Nav2 导航。上云桥接见 quadruped_mqtt_bridge，自主导航见 quadruped_explorer。</description>
   <maintainer email="wby@example.com">wby</maintainer>
   <license>Apache-2.0</license>
 
@@ -18,19 +18,12 @@
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
 
-  <!-- C++ 侧还有这些真实编译依赖，此前漏声明（导致新机器按 package.xml
-       装环境编不过；本机没装 rosdep，所以一直没被暴露） -->
-  <depend>std_srvs</depend>
+  <!-- 巡逻节点（自主导航）真实依赖；mqtt_bridge/voice_source/image_sender
+       已拆到 quadruped_mqtt_bridge，其 mosquitto/opencv/nlohmann 依赖随迁 -->
   <depend>rclcpp_action</depend>
   <depend>nav2_msgs</depend>
-  <build_depend>libopencv-dev</build_depend>
-  <exec_depend>libopencv-dev</exec_depend>
   <build_depend>libx11-dev</build_depend>
   <exec_depend>libx11-dev</exec_depend>
-  <build_depend>libmosquitto-dev</build_depend>
-  <exec_depend>libmosquitto-dev</exec_depend>
-  <build_depend>nlohmann-json-dev</build_depend>
-  <exec_depend>nlohmann-json-dev</exec_depend>
 
   <!-- 运行时依赖 -->
   <exec_depend>xacro</exec_depend>

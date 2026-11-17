@@ -240,7 +240,7 @@ def launch_setup(context, *args, **kwargs):
 
     # MQTT 看板桥：遥测上报 + 接收看板派单(estop/resume/assign)
     mqtt_bridge = Node(
-        package="quadruped_sim",
+        package="quadruped_mqtt_bridge",
         executable="mqtt_bridge",
         name="mqtt_bridge",
         output="screen",
@@ -267,7 +267,7 @@ def launch_setup(context, *args, **kwargs):
 
     # 视觉上云：JPEG 快照(MQTT) + H264 推流(RTSP，禁 B 帧)
     image_sender = Node(
-        package="quadruped_sim",
+        package="quadruped_mqtt_bridge",
         executable="image_sender",
         name="image_sender",
         output="screen",

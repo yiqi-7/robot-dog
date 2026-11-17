@@ -206,7 +206,7 @@ LLM_BACKEND=openai OPENAI_BASE_URL=http://127.0.0.1:8081/v1 VOICE_MODEL=qwen2.5-
 
 机器人侧由两个节点完成，契约严格对齐 §3.1 / §3.2：
 
-### 9.1 采集上行：`quadruped_sim/voice_source`
+### 9.1 采集上行：`quadruped_mqtt_bridge/voice_source`
 
 把麦克风/WAV 切成一段段语音，发 ROS 话题 `voice/audio_pcm`（`UInt8MultiArray`），
 由 `mqtt_bridge` 按 §3.1 组装 JSON 上行（base64 裸 PCM，不含 WAV 头；
@@ -214,10 +214,10 @@ LLM_BACKEND=openai OPENAI_BASE_URL=http://127.0.0.1:8081/v1 VOICE_MODEL=qwen2.5-
 
 ```bash
 # 自动分段（能量 VAD，静音 900ms 收尾）
-ros2 run quadruped_sim voice_source --ros-args -p mode:=vad -p thresh:=0.02
+ros2 run quadruped_mqtt_bridge voice_source --ros-args -p mode:=vad -p thresh:=0.02
 
 # 用 WAV 样本代替麦克风（无麦克风环境，本机即此模式）
-ros2 run quadruped_sim voice_source --ros-args \
+ros2 run quadruped_mqtt_bridge voice_source --ros-args \
   -p mode:=file -p wav_path:=/home/wby/voice-clips/cmd_inspection.wav -p loop:=false
 ```
 
@@ -242,7 +242,7 @@ ros2 topic pub -1 /voice/ptt std_msgs/msg/Bool "{data: false}"  # 手动收尾�
 注意：节点发布前会等待 `voice/audio_pcm` 的订阅者匹配（最多 10s）。DDS 发现未完成时
 直接发布，第一段语音会被静默丢弃——这是实测踩过的坑。
 
-### 9.2 TTS 播报：`quadruped_sim/mqtt_bridge`
+### 9.2 TTS 播报：`quadruped_mqtt_bridge/mqtt_bridge`
 
 收到 `{P}/robots/{id}/tts` 后：转发 ROS 话题 `voice/tts_text`（供看板/日志），
 同时入播报队列，用 piper 合成中文语音再 `aplay` 播放（队列串行，连发不互相打断）：
