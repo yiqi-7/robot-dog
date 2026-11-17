@@ -75,11 +75,88 @@ ros2 launch quadruped_sim quadruped_gz.launch.py gait:=champ nav:=true \
   已自行补了 lifecycle_manager_localization（管理 map_server + amcl）
 - AMCL 按差速模型配置，出生点 (0,-5.6) yaw 1.5708 由 initial_pose 给定
 
+当前推荐用合并补扫图（`maps/factory_full.yaml`）：404×289、0.05 m，
+自由 85.0% / 占据 5.6% / 未知 9.4%。补扫与合并方法见下一节。
+
+## 地图补扫与保守合并
+
+旧图仓库东侧有 18.7% 未知区（未知格在 `track_unknown_space: false` 下被
+当自由，规划器会给出穿货架的路径）。补扫流程：
+
+1. **SLAM 重建**：`ros2 launch quadruped_sim quadruped_gz.launch.py
+   gui:=false nav:=true gait:=champ`（不带 `map:=`）。注意启动后
+   `patrol_node` 会自己跑起来抢机器人，补扫前必须
+   `pkill -9 -f patrol_node`，否则建出的图锚点是错的。
+2. **自动补扫驱动**：逐点 `ComputePathToPose` 预验证 → `FollowPath` 跟踪，
+   中止就脱困重试一次。绕开 `bt_navigator`（它在 DDS 发现稍慢时会因
+   "follow_path action server not available" 反复激活失败）。
+3. **保守合并**（关键）：按世界坐标逐格合成，**旧图已知处全部保留**，
+   旧图未知处只吸收新图的"确认自由"格。**不要吸收新图障碍格**——
+   新会话的占据像素含步态抖动噪声，窄通道里多 1% 障碍就会让
+   0.35 m 内切膨胀连成墙（实测激进合并后 costmap 有 57% 格是
+   253/254，机器人被困在 1.2 m 口袋里，所有远点规划 208）。
+4. 合并后裁回旧图尺寸与原 origin（-10.067,-6.933），巡逻航点与
+   AMCL 初值不用改。
+
+诊断小抄：`/global_costmap/costmap` 发布值是 **0-100 缩放**，
+99 = costmap 253（内切膨胀，**规划视作障碍**），100 = 254（致命）。
+拿它做可达性判断时阈值要用 99，不是 253。
+
+## DDS 传输：TITAN V 必须用 UDP-only profile
+
+这台机是多用户训练机，FastDDS 的共享内存传输会间歇性坏掉，表现为：
+
+- `ros2 lifecycle get/set` 直接挂死（服务响应丢失），Nav2 生命周期链
+  卡在 `behavior_server configured` 之后，`bt_navigator` 永远
+  `unconfigured`；
+- `/tf` 完全空（odom_pub 进程活着但 `odom->base_link` 不广播），
+  global costmap 报 `Costmap timed out waiting for update`；
+- 日志里大量 `Message was dropped on topic [odom]/[scan] due to queue
+  size or network constraints`；
+- `/dev/shm` 里残留上百个 `fastdds_*` 段文件（清掉也复现）。
+
+修法：用 UDP-only profile 启动整栈（文件 `/home/wby/fastdds_udp.xml`）：
+
+```bash
+export FASTRTPS_DEFAULT_PROFILES_FILE=/home/wby/fastdds_udp.xml
+ros2 launch quadruped_sim quadruped_gz.launch.py nav:=true   map:=/run/media/wby/shuju/Document/robot-dog/maps/factory_full.yaml
+```
+
+实测效果：odom/scan 丢包从每分钟数十条降到 **0**，lifecycle 由
+`lifecycle_manager` 一次推通（不再需要手工 `ros2 lifecycle set`）。
+代价是大消息（点云/图像）多一次拷贝，对导航与建图没有影响。
+
+profile 内容（禁用内置传输，只挂 UDPv4）：
+
+```xml
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+    <transport_descriptors>
+      <transport_descriptor>
+        <transport_id>udp_only</transport_id>
+        <type>UDPv4</type>
+      </transport_descriptor>
+    </transport_descriptors>
+    <participant profile_name="udp_only_participant" is_default_profile="true">
+      <rtps>
+        <userTransports><transport_id>udp_only</transport_id></userTransports>
+        <useBuiltinTransports>false</useBuiltinTransports>
+      </rtps>
+    </participant>
+  </profiles>
+</dds>
+```
+
 ## 已知问题
 
 1. **贴墙局部最小值**：机器人贴到墙面上后 DWB 可能出不来，报
    `Failed to make progress`，随后的 spin 恢复也会因贴墙超时失败。
    门洞本身可以通过（已验证 0.95 m 门洞穿越成功）。
+   深层原因通常是 **Champ 步态卡滞**：Nav2 正常下发速度、路径也在，
+   但关节速度打满限幅推不动，`controller_server` 报 105 后以
+   `code=6` 中止。纯等 3 s 重发目标无效，必须先**脱困**：
+   短脉冲后退 1.3 s + 原地转 1.6 s 再重发（`patrol_node` 已内置，
+   实测约一半概率能重新起步）。连续卡死时需要人工干预。
 2. **在线 SLAM 地图质量**：边建图边导航时，地图未覆盖到的区域会被当作
    可通行，规划器可能给出穿墙路径。跑一段距离后地图变好，规划也变稳。
    已保存 `maps/factory_latest.{pgm,yaml}`，后续可改用静态地图。
