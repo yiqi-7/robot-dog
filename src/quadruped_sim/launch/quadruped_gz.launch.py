@@ -254,12 +254,15 @@ def launch_setup(context, *args, **kwargs):
     )
 
     # 多航点巡逻节点（航点参数可配，默认工厂环线）
+    # patrol:=false 时不启动巡逻（补扫/单点导航/语音测试用，否则 30 s 后
+    # 它会自己把机器人开走，毁掉定位对齐）
     patrol_node = Node(
         package="quadruped_sim",
         executable="patrol_node",
         name="patrol_node",
         output="screen",
         parameters=[{"use_sim_time": use_sim_time}],
+        condition=IfCondition(LaunchConfiguration("patrol")),
     )
 
     # 视觉上云：JPEG 快照(MQTT) + H264 推流(RTSP，禁 B 帧)
@@ -429,6 +432,7 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument("use_sim_time", default_value="true"),
+            DeclareLaunchArgument("patrol", default_value="true"),
             DeclareLaunchArgument(
                 "gui", default_value="true", description="是否显示 Gazebo 界面"
             ),

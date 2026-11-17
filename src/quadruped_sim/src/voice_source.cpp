@@ -25,6 +25,7 @@
 //   ros2 service call /voice/capture std_srvs/srv/Trigger     # 手动录一段（PTT）
 
 #include <rclcpp/rclcpp.hpp>
+#include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <std_msgs/msg/u_int8_multi_array.hpp>
 #include <std_srvs/srv/trigger.hpp>
@@ -162,6 +163,21 @@ public:
                       rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
     pub_status_ = create_publisher<String>("voice/source_status", 10);
 
+    // 课程标准按键说话接口：ptt.sh 用 `ros2 topic pub /voice/ptt` 触发，
+    // true 开录、false 手动收尾。和 voice/capture 服务共用同一套状态机。
+    sub_ptt_ = create_subscription<std_msgs::msg::Bool>(
+      "voice/ptt", 10,
+      [this](std_msgs::msg::Bool::SharedPtr msg) {
+        if (msg->data) {
+          if (mode_ == "file") ptt_file_ = true; else ptt_armed_ = true;
+          RCLCPP_INFO(get_logger(), "PTT 按下（%s）", mode_.c_str());
+        } else {
+          ptt_stop_ = true;      // VAD 循环里检测到就立即收尾
+          ptt_file_ = false;
+          RCLCPP_INFO(get_logger(), "PTT 松开，收尾上传");
+        }
+      });
+
     // PTT（按住说话/服务触发）：让"手动录一段"和 VAD 自动分段共用一套循环
     srv_capture_ = create_service<Trigger>(
       "voice/capture",
@@ -185,7 +201,8 @@ public:
       "  采样     : %d Hz / %d 声道 / 16bit\n"
       "  VAD      : 帧 %d ms，门限 %.3f，静音 %d ms 收尾，%.1f~%.1f s\n"
       "  话题     : voice/audio_pcm（片段）+ voice/audio_info（格式）\n"
-      "  服务     : voice/capture（std_srvs/srv/Trigger）",
+      "  服务     : voice/capture（std_srvs/srv/Trigger）\n"
+      "  按键说话 : voice/ptt（std_msgs/Bool，true 开录 / false 收尾）",
       mode_.c_str(),
       mode_ == "file" ? (" (" + wav_path_ + (loop_ ? ", loop" : "") + ")") : "",
       sample_rate_, channels_, frame_ms_, thresh_, silence_ms_,
@@ -272,6 +289,21 @@ private:
                          (2.0 * channels_ * sample_rate_);
       RCLCPP_INFO(get_logger(), "音频文件 %s：%.2f s @%d Hz/%d ch，开始上行",
         wav_path_.c_str(), dur, w.rate, w.channels);
+
+      // 等订阅者匹配再发：文件模式起来 1 ms 就发布，此时 DDS 发现还没完成，
+      // 可靠 QoS 在没有匹配订阅者时不会缓存而是直接丢弃（实测首段必丢）。
+      // 真机上采集节点也可能比 mqtt_bridge 先起，所以这里统一等一下。
+      const auto match_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+      while (rclcpp::ok() && !stop_ && pub_pcm_->get_subscription_count() == 0 &&
+             std::chrono::steady_clock::now() < match_deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      }
+      if (pub_pcm_->get_subscription_count() == 0) {
+        RCLCPP_WARN(get_logger(), "10 s 内没有订阅者匹配 voice/audio_pcm，仍尝试发布");
+      } else {
+        RCLCPP_INFO(get_logger(), "订阅者已匹配（%zu 个），开始发布",
+          pub_pcm_->get_subscription_count());
+      }
 
       // 前面垫 300 ms 静音，模拟"先按下录音键再开口"，也让网关的质量守卫
       // 看到真实的起止能量包络
@@ -361,7 +393,13 @@ private:
 
           const double seg_ms =
             static_cast<double>(seg.size()) / (2.0 * channels_ * sample_rate_) * 1000.0;
-          if (silence_frames >= silence_frames_needed) {
+          if (ptt_stop_.exchange(false)) {
+            // 手动松开 PTT：不等静音窗口，立刻收尾
+            speaking = false;
+            publishSegment(std::move(seg),
+              seg_frames ? seg_rms_sum / seg_frames : 0.0, "ptt-release");
+            seg.clear();
+          } else if (silence_frames >= silence_frames_needed) {
             speaking = false;
             publishSegment(std::move(seg),
               seg_frames ? seg_rms_sum / seg_frames : 0.0, "vad-silence");
@@ -389,12 +427,14 @@ private:
   double thresh_ = 0.02, gap_s_ = 3.0;
   bool loop_ = false;
 
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_ptt_;
+
   rclcpp::Publisher<UInt8MultiArray>::SharedPtr pub_pcm_;
   rclcpp::Publisher<String>::SharedPtr pub_info_, pub_status_;
   rclcpp::Service<Trigger>::SharedPtr srv_capture_;
 
   std::thread worker_;
-  std::atomic<bool> stop_{false}, ptt_armed_{false}, ptt_file_{false};
+  std::atomic<bool> stop_{false}, ptt_armed_{false}, ptt_file_{false}, ptt_stop_{false};
   int segment_count_ = 0;
 };
 

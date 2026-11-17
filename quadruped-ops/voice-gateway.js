@@ -247,7 +247,7 @@ async function parseWithLlm(text, now) {
     `- 带时间（"X分钟后"/"X点后"/"下午3点"）-> mode=scheduled 且 scheduledAt 为毫秒时间戳；否则 immediate`,
     `- "下午/晚上"的时间必须换算成 24 小时制（下午3点 = 15:00）`,
     `- confidence 0-1，拿不准给低分`,
-    `示例: "让哨兵去货架区巡检" -> {"action":"task","type":"inspection","target":"pt-shelf-n","mode":"immediate","scheduledAt":null,"priority":"normal","robot":"QB-01","confidence":0.92}`,
+    `示例: "让仿真狗去仓库货架区巡检" -> {"action":"task","type":"inspection","target":"warehouse-racks","mode":"immediate","scheduledAt":null,"priority":"normal","robot":null,"confidence":0.92}`,
     `指令: "${text}"`,
   ].join("\n");
 
@@ -303,19 +303,37 @@ function parseWithRules(text, now) {
     if (t.toUpperCase().includes(id.toUpperCase()) || (r.name && t.includes(r.name))) { robot = id; break; }
   }
   // 定时
+  // 中文数字 -> 数值（"两分钟""十一分钟"这类 ASR 常见输出；0.5B 模型也经常漏掉）
+  const cnDigit = { "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
+    "六": 6, "七": 7, "八": 8, "九": 9 };
+  const cnNum = (str) => {
+    if (/^\d+$/.test(str)) return Number(str);
+    if (str === "十") return 10;
+    if (str === "半") return 0.5;
+    const m10 = str.match(/^十([一二三四五六七八九])?$/);
+    if (m10) return 10 + (m10[1] ? cnDigit[m10[1]] : 0);
+    const m1 = str.match(/^([一二两三四五六七八九])十$/);
+    if (m1) return cnDigit[m1[1]] * 10;
+    const m2 = str.match(/^([一二两三四五六七八九])十([一二三四五六七八九])$/);
+    if (m2) return cnDigit[m2[1]] * 10 + cnDigit[m2[2]];
+    if (cnDigit[str] !== undefined) return cnDigit[str];   // 单个数字："一分钟"
+    return NaN;
+  };
   let mode = "immediate";
   let scheduledAt = null;
   let m;
-  if ((m = t.match(/(\d+)分钟后/))) {
-    mode = "scheduled"; scheduledAt = now + Number(m[1]) * 60_000;
-  } else if ((m = t.match(/(\d+)小时后/))) {
-    mode = "scheduled"; scheduledAt = now + Number(m[1]) * 3600_000;
-  } else if ((m = t.match(/(下午|晚上|中午|上午|早上|凌晨)?(\d{1,2})[点:：](半|(\d{1,2})分?)?/))) {
-    let hh = Number(m[2]);
+  if ((m = t.match(/([\d一二两三四五六七八九十]+)个?分钟?后/))) {
+    const n = cnNum(m[1]);
+    if (Number.isFinite(n) && n > 0) { mode = "scheduled"; scheduledAt = now + n * 60_000; }
+  } else if ((m = t.match(/([\d一二两三四五六七八九十]+)个?(?:半)?小时后/)) || (m = t.match(/半小时后/))) {
+    const n = m[1] ? cnNum(m[1]) : 0.5;
+    if (Number.isFinite(n) && n > 0) { mode = "scheduled"; scheduledAt = now + n * 3600_000; }
+  } else if ((m = t.match(/(下午|晚上|中午|上午|早上|凌晨)?([\d一二两三四五六七八九十]{1,3})[点:：](半|([\d一二两三四五六七八九十]{1,3})分?)?/))) {
+    let hh = cnNum(m[2]);
     const period = m[1];
     if ((period === "下午" || period === "晚上") && hh < 12) hh += 12;
     if (period === "中午" && hh < 12) hh += 12;
-    const mm = m[3] === "半" ? 30 : Number(m[4] ?? 0);
+    const mm = m[3] === "半" ? 30 : (m[4] ? (cnNum(m[4]) || 0) : 0);
     const d = new Date(now);
     d.setHours(hh, mm, 0, 0);
     if (d.getTime() <= now) d.setDate(d.getDate() + 1);
@@ -325,7 +343,7 @@ function parseWithRules(text, now) {
   let type = null;
   if (/充电|回充|回桩/.test(t)) type = "charging";
   else if (/巡检|巡查|检查|看看|转一圈|巡逻/.test(t)) type = "inspection";
-  else if (/移动|过去|过来|前往/.test(t) || /^去|到/.test(t)) type = "move";
+  else if (/移动|过去|过来|前往|到/.test(t) || /去/.test(t)) type = "move";
   // 点位（充电桩优先匹配充电任务）
   let target = null;
   const chargers = siteMap.points.filter((p) => p.kind === "charger");
@@ -447,6 +465,47 @@ function acceptCommand(cmd) {
   raiseEvent("info", `语音指令已发布为任务 #${id}：「${cmd.transcript}」→ ${task.title}${cmd.robotId ? ` @ ${cmd.robotId}` : ""}`);
 }
 
+// ---------------------------------------------------------------------------
+// 定时任务调度器
+// acceptCommand 对 scheduled 任务只入列不下发（"五分钟后去充电"这类指令），
+// 这里每 5 s 扫描到期任务补发 assign。两个防呆：
+//   1) dispatchedIds：机器人侧状态回写有延迟，防止同一任务重复下发；
+//   2) 过期兜底：网关停机跨过 scheduledAt 再重启时，超过 30 分钟的旧任务
+//      不再补跑（避免半夜重启把机器人突然开走），标记 expired。
+// ---------------------------------------------------------------------------
+const dispatchedIds = new Set();
+setInterval(() => {
+  const now = Date.now();
+  let changed = false;
+  for (const t of tasks) {
+    if (t.mode !== "scheduled" || !t.scheduledAt || !t.robotId) continue;
+    if (t.status !== "published" || dispatchedIds.has(t.id)) continue;
+    if (Number(t.scheduledAt) > now) continue;
+    if (now - Number(t.scheduledAt) > 30 * 60_000) {
+      t.status = "expired";
+      t.updatedAt = now;
+      changed = true;
+      raiseEvent("warning", `定时任务 #${t.id} 已过期未执行（超过 30 分钟）：${t.title}`);
+      console.log(`[scheduler] 任务 #${t.id} 过期，跳过下发`);
+      continue;
+    }
+    dispatchedIds.add(t.id);
+    client.publish(T.robotCmd(t.robotId), JSON.stringify({
+      cmdId: `CMD-${now.toString(36)}`, ts: now, action: "assign", task: t,
+    }), { qos: 1 });
+    t.dispatchedAt = now;
+    t.updatedAt = now;
+    changed = true;
+    const pointName = t.target ? siteMap.points.find((p) => p.id === t.target)?.name : null;
+    tts(t.robotId, `定时任务到点，开始${TYPE_LABELS[t.type] ?? "执行"}${pointName ?? ""}`);
+    raiseEvent("info", `定时任务 #${t.id} 到点下发：${t.title} → ${t.robotId}`);
+    console.log(`[scheduler] 任务 #${t.id} 到点下发（计划 ${new Date(t.scheduledAt).toLocaleTimeString("zh-CN", { hour12: false })}）`);
+  }
+  if (changed) {
+    client.publish(T.fleetTasks(), JSON.stringify(tasks), { retain: true, qos: 1 });
+  }
+}, 5000);
+
 async function handleTranscript({ text, heardBy, source, cmdId, audioFile = null }) {
   const now = Date.now();
   const cmd = {
@@ -467,11 +526,29 @@ async function handleTranscript({ text, heardBy, source, cmdId, audioFile = null
     const rule = parseWithRules(text, now);
     // 急停关键词安全兜底：规则命中急停而 LLM 没识别时，以规则为准
     if (rule.action === "estop" && parsed.action !== "estop") parsed = rule;
-    // 时间词兜底：LLM 漏掉定时时，用规则提取的时间补齐
-    else if (parsed.action === "task" && parsed.mode !== "scheduled" && rule.action === "task" && rule.mode === "scheduled" && rule.scheduledAt) {
-      parsed.mode = "scheduled";
-      parsed.scheduledAt = rule.scheduledAt;
-      parsed.confidence = Math.min(Number(parsed.confidence) || 0.9, 0.8);
+    else if (parsed.action === "task") {
+      // 小模型（0.5B 级）常见三类漏项，都用规则路补齐：
+      // ① target 必须是真实点位：0.5B 会照抄 prompt 示例里的旧 id
+      //   （实测输出 pt-shelf-n，地图里根本没有），假 id 直接丢弃
+      if (siteMap.points.length && parsed.target &&
+          !siteMap.points.some((p) => p.id === parsed.target)) {
+        parsed.target = null;
+      }
+      // ①' 漏 target（"去充电桩充电"没给点位 id）
+      if (!parsed.target && rule.target) parsed.target = rule.target;
+      // ② 漏 robot（点名了但 LLM 没对上）
+      if (!parsed.robot && rule.robot) parsed.robot = rule.robot;
+      // ③ scheduledAt 缺失或偏差离谱（实测 0.5B 会把"5 分钟"算成 30 秒）。
+      //    偏差超过 5 分钟或缺项时直接用规则值，规则解析对中文时间词更可靠。
+      if (rule.action === "task" && rule.mode === "scheduled" && rule.scheduledAt) {
+        const llmAt = Number(parsed.scheduledAt) || 0;
+        const off = Math.abs(llmAt - rule.scheduledAt);
+        if (parsed.mode !== "scheduled" || !llmAt || off > 5 * 60_000) {
+          parsed.mode = "scheduled";
+          parsed.scheduledAt = rule.scheduledAt;
+          parsed.confidence = Math.min(Number(parsed.confidence) || 0.9, 0.8);
+        }
+      }
     }
   }
 

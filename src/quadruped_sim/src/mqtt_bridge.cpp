@@ -55,6 +55,10 @@
 #include <mosquitto.h>
 #include <nlohmann/json.hpp>
 #include <std_msgs/msg/u_int8_multi_array.hpp>
+#include <condition_variable>
+#include <deque>
+#include <fstream>
+#include <thread>
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
@@ -213,6 +217,10 @@ public:
     audio_ros_topic_   = declare_parameter("audio_topic", "voice/audio_pcm");
     audio_sample_rate_ = declare_parameter("audio_sample_rate", 16000);
     audio_channels_    = declare_parameter("audio_channels", 1);
+    // TTS 本地播报：piper（模型 course 提供 zh_CN-huayan-medium）
+    piper_bin_   = declare_parameter("piper_bin", "/home/wby/venvs/piper/bin/piper");
+    piper_model_ = declare_parameter("piper_model",
+      "/run/media/wby/shuju/Document/robot-dog/quadruped-ops/models/piper/zh_CN-huayan-medium.onnx");
 
     // 前往目标点的行驶参数
     nav_speed_     = declare_parameter("nav_speed", 0.25);   // m/s
@@ -301,6 +309,7 @@ public:
         });
       RCLCPP_INFO(get_logger(), "语音上行已启用：ROS %s → MQTT %s",
         audio_ros_topic_.c_str(), audio_topic_.c_str());
+      tts_thread_ = std::thread([this] { ttsWorker(); });
     }
 
     pub_cmd_vel_ = create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 10);
@@ -351,6 +360,10 @@ public:
 
   ~MqttBridge() override
   {
+    if (tts_thread_.joinable()) {
+      tts_cv_.notify_all();
+      tts_thread_.join();
+    }
     if (mosq_) {
       mosquitto_disconnect(mosq_);        // 正常断开 → 不触发遗嘱
       mosquitto_loop_stop(mosq_, false);
@@ -844,6 +857,50 @@ private:
     std_msgs::msg::String m;
     m.data = say;
     pub_tts_text_->publish(m);
+    enqueueTts(say);
+  }
+
+  // =========================================================================
+  // TTS 本地播报（课程标准）：piper 合成 zh_CN-huayan-medium → aplay 播放。
+  // 队列化：网关可能连发多条（"收到"+"已执行"），串行播不互相打断。
+  // =========================================================================
+  void enqueueTts(const std::string & text)
+  {
+    if (text.empty()) return;
+    {
+      std::lock_guard<std::mutex> lk(tts_mutex_);
+      tts_queue_.push_back(text);
+    }
+    tts_cv_.notify_one();
+  }
+
+  void ttsWorker()
+  {
+    while (rclcpp::ok()) {
+      std::string text;
+      {
+        std::unique_lock<std::mutex> lk(tts_mutex_);
+        tts_cv_.wait(lk, [this] { return !tts_queue_.empty() || !rclcpp::ok(); });
+        if (tts_queue_.empty()) continue;
+        text = tts_queue_.front();
+        tts_queue_.pop_front();
+      }
+      RCLCPP_INFO(get_logger(), "TTS 播报: %s", text.c_str());
+      const std::string inFile = "/tmp/qbot_tts_in.txt";
+      const std::string outFile = "/tmp/qbot_tts.wav";
+      {
+        std::ofstream f(inFile);
+        f << text << "\n";
+      }
+      const std::string synth = piper_bin_ + " -m " + piper_model_ +
+        " -f " + outFile + " < " + inFile + " 2>/dev/null";
+      if (std::system(synth.c_str()) == 0) {
+        std::system(("aplay -q " + outFile + " 2>/dev/null").c_str());
+      } else {
+        // 没装 piper / 没有音频输出设备时只留日志，不影响链路
+        RCLCPP_WARN(get_logger(), "TTS 合成/播放失败（piper 不可用或无声卡输出）");
+      }
+    }
   }
 
   // 同类告警冷却：同一个 key 在 cooldown_s 内只报一次，避免每秒刷屏
@@ -1201,6 +1258,11 @@ private:
   rclcpp::Subscription<std_msgs::msg::UInt8MultiArray>::SharedPtr sub_audio_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_audio_info_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub_tts_text_;
+  std::string piper_bin_, piper_model_;
+  std::thread tts_thread_;
+  std::mutex tts_mutex_;
+  std::condition_variable tts_cv_;
+  std::deque<std::string> tts_queue_;
 
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_odom_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr sub_joint_;
