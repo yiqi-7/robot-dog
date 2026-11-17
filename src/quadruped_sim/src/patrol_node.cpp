@@ -2,6 +2,9 @@
 // 设计要点（对应实测结论，见 NAV2-GUIDE.md）：
 //  - 遇 error_code 208（NavFn "Failed to create plan"，机器人贴墙
 //    停稳后脚下格被标致命）视为可重试错误：取消后等 3 s 重发，最多 2 次。
+//  - 重试前先做"脱困"（后退+原地转）：机器人多半是顶在障碍/膨胀区里
+//    推不动（Champ 步态卡滞，controller 报 105），纯等重发没用；
+//    挪一下再试，实测能把相当一部分 code=6/105 变成到达。
 //  - 机器人实际速度约 0.08 m/s，目标超时按航点间距 / 0.06 + 90 s 估算，
 //    宁可超时不误杀。
 //  - 全程通过 /patrol/status（std_msgs/String，JSON）播报进度，
@@ -16,6 +19,8 @@
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <geometry_msgs/msg/twist.hpp>
+#include <thread>
 
 using NavigateToPose = nav2_msgs::action::NavigateToPose;
 using GoalHandle = rclcpp_action::ClientGoalHandle<NavigateToPose>;
@@ -85,6 +90,10 @@ public:
 
     client_ = rclcpp_action::create_client<NavigateToPose>(this, "navigate_to_pose");
     status_pub_ = create_publisher<std_msgs::msg::String>("/patrol/status", 10);
+    // 脱困速度发布器：直发 /cmd_vel（Champ 的最终速度入口）。
+    // 正常巡航绝不碰这条路径，只在"确认卡滞"后发短脉冲；此时 Nav2
+    // 目标已中止、controller 停发速度，不存在两个来源打架。
+    unstick_pub_ = create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
     // 派单互斥开关：mqtt_bridge 派单时置 false，任务结束后置 true
     enable_sub_ = create_subscription<std_msgs::msg::Bool>(
       "/patrol/enable", 10,
@@ -141,6 +150,33 @@ private:
     publishStatus("going", std::string("前往 ") + wp.name);
   }
 
+  // 卡滞脱困：后退一小段 + 原地转一个角度。
+  // Champ 步态"顶住"障碍时，Nav2 有路径、速度也下发了，但关节速度
+  // 打满限幅底盘不前进，controller 以 105 "Failed to make progress"
+  // 中止。原地等再久都是白等；挪一下再重发目标，实测能把相当一部分
+  // code=6/105 变成到达。
+  // 阻塞约 3.2 s：期间 500ms 的 step() 回调不会插新目标（active_==false
+  // 且 cooldown_ 未到），安全。
+  void unstick()
+  {
+    RCLCPP_WARN(get_logger(), "执行脱困：后退+转身");
+    publishStatus("unstick", "卡滞脱困中");
+    auto pulse = [this](double lx, double az, int ms) {
+      geometry_msgs::msg::Twist t;
+      t.linear.x = lx;
+      t.angular.z = az;
+      for (int sent = 0; sent < ms; sent += 100) {
+        unstick_pub_->publish(t);
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      }
+      geometry_msgs::msg::Twist stop;
+      for (int i = 0; i < 3; ++i) { unstick_pub_->publish(stop); }
+      std::this_thread::sleep_for(std::chrono::milliseconds(800));
+    };
+    pulse(-0.12, 0.0, 1300);   // 后退 1.3 s
+    pulse(0.0, 0.5, 1600);     // 原地转 1.6 s
+  }
+
   void onResult(const GoalHandle::WrappedResult & result)
   {
     active_ = false;
@@ -163,8 +199,9 @@ private:
 
     // 208 = NavFn 规划失败（可重试，见 NAV2-GUIDE.md）；其余失败码也重试但更保守
     if (attempt_ < 2) {
+      unstick();
       ++attempt_;
-      RCLCPP_WARN(get_logger(), "航点 %s 失败 (code=%d)，3 s 后重试 %d/2",
+      RCLCPP_WARN(get_logger(), "航点 %s 失败 (code=%d)，脱困完成，3 s 后重试 %d/2",
                   wp.name.c_str(), static_cast<int>(result.code), attempt_);
       publishStatus("retry", std::string("重试中 ") + wp.name);
       cooldown_ = 3;
@@ -210,6 +247,7 @@ private:
 
   rclcpp_action::Client<NavigateToPose>::SharedPtr client_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr unstick_pub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr enable_sub_;
   rclcpp::TimerBase::SharedPtr timer_;
   std::shared_ptr<GoalHandle> goal_handle_;
