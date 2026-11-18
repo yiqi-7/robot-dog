@@ -178,7 +178,20 @@ Details: **[dashboard/VIDEO-LINK.md](dashboard/VIDEO-LINK.md)**.
 | Voice compression | 3.6 s: 112 KB PCM → 5 KB Opus → 7 KB base64 |
 | Cloud relay RTT | 851–1590 ms (mean 1192 ms, jitter ±304 ms) |
 | MQTT reconnect recovery | 10–16 s (`mosquitto_reconnect_delay_set(2, 10)`) |
-| Weak-network matrix | 27 of 28 checks passing (six profiles R0–R5: baseline/delay/jitter/loss/reorder/outage) |
+| Weak-network matrix | 28 of 41 checks passing (six profiles W1–W6: delay/jitter/loss/reorder/outage/combined) |
+
+**What the 13 failures actually are** (each verified against the raw result log):
+
+- **W5/W6 (link outage) are genuine failures**: after the link drops the client does not detect
+  the keepalive timeout promptly, and after recovery neither `state` nor the three nodes
+  reconnect inside the 25 s window — telemetry stops.
+- **4 "task dispatch" failures are false negatives in the checker**: displacement for W2/W3/W4 was
+  4.90 / 1.74 / 5.44 m — the robot did drive there, but the checker's "did it start" test reported
+  `False` because it only looks at the first velocity frame, which packet loss can drop.
+  Displacement is the trustworthy signal.
+- **W1 dispatch genuinely did not execute** (0.00 m displacement).
+- **Watchdog and node liveness passed 12/12**: across all six profiles `deadman_guard` never
+  tripped spuriously and all four nodes stayed online — positive evidence for the safety chain.
 
 ---
 
