@@ -11,6 +11,7 @@ import { MAP } from "@/config"
 import { TOPICS, topicMatch } from "./topics"
 import type { IBus } from "./bus"
 import type { CmdMsg, EventMsg, FacilityMsg, RobotStateMsg, TaskMsg } from "./wire"
+import { mergeTasksById } from "./wire"
 import { DEFAULT_SITE_MAP } from "@/map/site"
 import camCharging from "@/assets/cam/charging.png"
 import camCorridor from "@/assets/cam/corridor.png"
@@ -177,8 +178,10 @@ export class DeviceSimulator {
   /* ---------------- 任务引擎 ---------------- */
 
   private adoptTasks(list: TaskMsg[]) {
-    // 看板是任务列表写入方；执行中的任务不被外部状态回退
-    this.tasks = list.map((t) => ({ ...t }))
+    // 按 id + rev 合并，不能整表替换（理由同 trpc.tsx 的订阅回调）：
+    // 机器人回写的是全量数组，里面既有它没动过的条目，也可能带着本端更晚的改动，
+    // 直接覆盖会把本端更新版本打回旧值。
+    this.tasks = mergeTasksById(this.tasks, list.map((t) => ({ ...t })))
     // 撤销联动：任务被撤销时，正在执行它的机器人立即停下
     for (const r of this.robots) {
       if (r.activeTaskId != null) {

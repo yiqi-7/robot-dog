@@ -19,7 +19,7 @@ import {
 } from "react";
 import { useSim } from "@/sim/store";
 import { TOPICS } from "@/mqtt/topics";
-import { taskFromMsg, taskToMsg, type TaskMsg } from "@/mqtt/wire";
+import { bumpTaskRev, mergeTasksById, taskFromMsg, taskToMsg, type TaskMsg } from "@/mqtt/wire";
 import {
   type Task,
   type TaskMode,
@@ -65,14 +65,28 @@ export function TaskProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     return bus.subscribe((topic, payload) => {
       if (topic !== TOPICS.fleetTasks()) return;
-      setTasks((payload as TaskMsg[]).map(taskFromMsg));
+      // 按 id + rev 合并，不能整表替换：fleet/tasks 是 retained 全量数组，
+      // 机器人回写的是「它关心的那一条 + 它收到的其余条目」。直接 setTasks(parse)
+      // 会把「收到快照 → 状态落地」之间看板自己新增/修改的任务整表抹掉。
+      // 协议与机器人侧 task_runner_tasks.cpp、网关侧 voice-gateway.js 一致。
+      setTasks((prev) => mergeTasksById(prev, (payload as TaskMsg[]).map(taskFromMsg)));
     });
   }, [bus]);
 
   /** 全量写回（retained），由 Broker 回环驱动本地状态 */
   const writeAll = useCallback(
     (next: Task[]) => {
-      bus.publish(TOPICS.fleetTasks(), next.map(taskToMsg), { retain: true });
+      // 本端改动过的任务必须把 rev 提到「已知较大值 + 1」再发布。否则它带着旧 rev
+      // 写回去，会被机器人和网关按「rev 大者胜」判成旧版本直接丢弃——表现就是
+      // 看板上改了任务、刷新后又被改回去。updatedAt 是所有改动路径都会更新的字段，
+      // 用它判断「这条是否被本端改过」最省事也最不容易漏。
+      const before = new Map(tasksRef.current.map((t) => [t.id, t]));
+      const bumped = next.map((t) => {
+        const prev = before.get(t.id);
+        const changed = !prev || prev.updatedAt.getTime() !== t.updatedAt.getTime();
+        return changed ? bumpTaskRev(t) : t;
+      });
+      bus.publish(TOPICS.fleetTasks(), bumped.map(taskToMsg), { retain: true });
     },
     [bus],
   );

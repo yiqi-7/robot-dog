@@ -32,9 +32,27 @@ const P = process.env.TOPIC_PREFIX || "qbot/v1";
 const OLLAMA_URL = process.env.OLLAMA_URL || "http://localhost:11434";
 const VOICE_MODEL = process.env.VOICE_MODEL || "qwen2.5:1.5b";
 const ASR_MODEL_DIR = process.env.ASR_MODEL_DIR || path.join(process.cwd(), "models", "sensevoice");
-const PENDING_TTL_MS = Number(process.env.PENDING_TTL_MS || 10 * 60_000);
 const CLIP_DIR = process.env.VOICE_CLIP_DIR || path.join(process.cwd(), "voice-clips");
-const CLIP_KEEP = Number(process.env.VOICE_CLIP_KEEP || 100);
+
+/**
+ * 解析"正数型"环境变量。
+ * 直接 Number(process.env.X) 在写错时得到 NaN：NaN 传给 setTimeout 会被当成 0，
+ * 待确认指令刚建好就立刻超时，现象诡异且极难排查。这里统一校验，
+ * 非法值回退默认值并打印一条明确告警（包含变量名、原始值和默认值）。
+ */
+function envPositiveInt(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || String(raw).trim() === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    console.warn(`[config] 环境变量 ${name}="${raw}" 非法（需 > 0 的数字），已回退默认值 ${fallback}`);
+    return fallback;
+  }
+  return n;
+}
+
+const PENDING_TTL_MS = envPositiveInt("PENDING_TTL_MS", 10 * 60_000);
+const CLIP_KEEP = Math.max(1, Math.floor(envPositiveInt("VOICE_CLIP_KEEP", 100)));
 
 const T = {
   robotState: (id) => `${P}/robots/${id}/state`,
@@ -67,6 +85,13 @@ let tasks = [];
 let policy = structuredClone(DEFAULT_POLICY);
 let commands = []; // VoiceCommandMsg[]，新在前
 const pendingTimers = new Map(); // cmdId -> timeout
+
+/** voice/commands 的发布条数：retained 消息要小，看板只展示最近若干条 */
+const COMMANDS_PUBLISH = 50;
+/** voice/commands 的内存保留条数：比发布上限宽，供本地回看/排障（否则 unshift 只增不减会缓慢泄漏） */
+const COMMANDS_KEEP = 200;
+/** 本地刚写入、回显尚未回到的任务，在合并远端 fleet/tasks 快照时的保护窗口（毫秒） */
+const TASK_LOCAL_GRACE_MS = 10_000;
 
 /* ---------------- ASR（可选，sherpa-onnx SenseVoice） ---------------- */
 let recognizer = null;
@@ -302,10 +327,81 @@ function parseWithRules(text, now) {
  * 占用的号，保证在"网关 + 看板"双写场景下不重复。
  */
 function allocTaskId(list) {
-  const used = new Set(list.map((t) => t.id));
-  let id = list.reduce((m, t) => Math.max(m, Number(t.id) || 0), 0) + 1;
-  while (used.has(id)) id += 1;
+  // id 在 MQTT 上可能被别处写成字符串（"7"），统一按字符串比较才跳得干净
+  const used = new Set(list.map((t) => String(t.id)));
+  let max = 0;
+  for (const t of list) {
+    const n = Number(t.id);
+    if (Number.isFinite(n) && n > max) max = n;
+  }
+  let id = max + 1;
+  while (used.has(String(id))) id += 1;
   return id;
+}
+
+/* ---------------- 任务合并（按 id + rev，与 C++ 侧 task_runner_tasks.cpp 协议一致） ---------------- */
+/**
+ * 合并协议（JS 侧与 C++ 侧 task_runner_tasks.cpp 共用）：
+ *   - 任务以 id 为唯一键，rev 为单调递增版本号；
+ *   - 同 id 合并时 rev 大者胜，绝不用旧 rev 覆盖新 rev（否则机器人回写的进度会被打回）；
+ *   - 本地不认识的 id 原样保留：机器人侧回写的、看板侧新增的任务不能被网关抹掉。
+ *
+ * MQTT 的 fleet/tasks 是 retained 全量数组，所以"发布"本身仍是整表发布，
+ * 但发布内容必须是"发布前最新快照 + 本次改动"的合并结果，而不是本地旧快照，
+ * 否则两段音频并发时后发布的那次会把先发布的任务/看板刚加的任务整表抹掉。
+ */
+function taskRev(t) {
+  const n = Number(t && t.rev);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/** 把 patch 按协议并入 base，返回新数组；base 顺序不变，patch 里的新 id 放最前（沿用"新任务在前"语义） */
+function mergeTasksById(base, patch) {
+  const out = Array.isArray(base) ? base.slice() : [];
+  const index = new Map(out.map((t, i) => [String(t.id), i]));
+  const added = [];
+  for (const p of Array.isArray(patch) ? patch : []) {
+    const key = String(p.id);
+    const i = index.get(key);
+    if (i === undefined) {
+      added.push(p);
+      index.set(key, -1); // 防止 patch 内同 id 重复插入
+      continue;
+    }
+    if (i >= 0 && taskRev(p) > taskRev(out[i])) out[i] = p; // rev 大者胜；相等/更旧则保留现有条目
+  }
+  return added.length ? added.concat(out) : out;
+}
+
+/**
+ * 收到 retained fleet/tasks 快照时并入本地镜像（不整表直接替换）。
+ * 远端快照仍是权威来源（含机器人回写、看板改动与删除），但要避开两个坑：
+ *   1) 本地刚发布、回显还在往返途中：同一 id 用 rev 大者胜，别把自己打回旧版本；
+ *   2) 本地有、快照里没有的 id：短时间内（TASK_LOCAL_GRACE_MS）保留，等待回显；
+ *      超过窗口说明远端已删除，丢弃，避免已删任务被网关一直"复活"。
+ */
+function syncTasksFromSnapshot(list) {
+  if (!Array.isArray(list)) return;
+  const now = Date.now();
+  const localById = new Map(tasks.map((t) => [String(t.id), t]));
+  const seen = new Set();
+  const out = [];
+  for (const rt of list) {
+    if (!rt || rt.id === undefined || rt.id === null) continue;
+    const key = String(rt.id);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const lt = localById.get(key);
+    out.push(lt && taskRev(lt) > taskRev(rt) ? lt : rt);
+  }
+  for (const lt of tasks) {
+    if (!lt || lt.id === undefined || lt.id === null) continue;
+    const key = String(lt.id);
+    if (seen.has(key)) continue;
+    const touched = Number(lt.updatedAt ?? lt.createdAt ?? 0) || 0;
+    if (now - touched <= TASK_LOCAL_GRACE_MS) out.push(lt);
+  }
+  tasks = out;
 }
 
 function buildTask(parsed, text, now) {
@@ -341,7 +437,9 @@ function buildTask(parsed, text, now) {
 
 /* ---------------- 发布辅助 ---------------- */
 function publishCommands() {
-  client.publish(T.voiceCommands(), JSON.stringify(commands.slice(0, 50)), { retain: true, qos: 1 });
+  // 只发布最近 COMMANDS_PUBLISH 条：retained 消息越大，重连首包越慢、越容易触发 broker 限流；
+  // 内存里另外保留 COMMANDS_KEEP 条（见 upsertCommand），供本地回看 / 排障。
+  client.publish(T.voiceCommands(), JSON.stringify(commands.slice(0, COMMANDS_PUBLISH)), { retain: true, qos: 1 });
 }
 
 function tts(robotId, text, cmdId) {
@@ -349,15 +447,29 @@ function tts(robotId, text, cmdId) {
   client.publish(T.robotTts(robotId), JSON.stringify({ cmdId, ts: Date.now(), text }), { qos: 1 });
 }
 
+/**
+ * alarmId 必须进程内严格单调、绝不重复：看板按它去重，重号会直接吞掉告警。
+ * 旧实现 Date.now() % 1e9 在同一毫秒内多次 raiseEvent 就会撞号（语音急停+解析失败很常见）。
+ * 现在用"毫秒时间戳 × 1000 + 自增"：同毫秒内递增，跨毫秒天然更大，时钟回拨时 max() 兜住仍单调。
+ * 值域约 1.7e15，远小于 Number.MAX_SAFE_INTEGER（9e15），保持 number 类型不改变看板契约。
+ */
+let lastAlarmId = 0;
+function nextAlarmId() {
+  lastAlarmId = Math.max(lastAlarmId + 1, Date.now() * 1000);
+  return lastAlarmId;
+}
+
 function raiseEvent(level, message) {
   client.publish(T.event(), JSON.stringify({
-    alarmId: Date.now() % 1_000_000_000, ts: Date.now(), level, source: "语音网关", message,
+    alarmId: nextAlarmId(), ts: Date.now(), level, source: "语音网关", message,
   }), { qos: 1 });
 }
 
 function upsertCommand(cmd) {
   const i = commands.findIndex((c) => c.cmdId === cmd.cmdId);
   if (i >= 0) commands[i] = cmd; else commands.unshift(cmd);
+  // 内存上限：unshift 只增不减会让长跑网关（云端 systemd 常驻）缓慢涨内存
+  if (commands.length > COMMANDS_KEEP) commands.length = COMMANDS_KEEP;
   publishCommands();
 }
 
@@ -376,9 +488,13 @@ function acceptCommand(cmd) {
     raiseEvent("critical", `语音急停：${cmd.robotId ?? cmd.heardBy}（「${cmd.transcript}」）`);
     return;
   }
-  const id = allocTaskId(tasks);
+  // 以"发布前最新快照"为基准：期间可能已收到机器人回写 / 看板新增，
+  // 不能拿旧快照算 id，更不能整表覆盖（会把别人的任务抹掉）
+  const base = Array.isArray(tasks) ? tasks : [];
+  const id = allocTaskId(base); // 在最新快照上分配，并跳过所有已占用 id（含机器人侧刚回写的）
   const task = {
     id,
+    rev: 1,
     title: cmd.parsed.title,
     type: cmd.parsed.type,
     mode: cmd.parsed.mode,
@@ -392,7 +508,8 @@ function acceptCommand(cmd) {
     updatedAt: now,
     source: "voice",
   };
-  tasks = [task, ...tasks];
+  // 按 id + rev 合并进最新快照：其余条目（机器人回写、看板新增）原样保留
+  tasks = mergeTasksById(base, [task]);
   client.publish(T.fleetTasks(), JSON.stringify(tasks), { retain: true, qos: 1 });
   // 即时任务立即下发 assign（与看板发布行为一致）
   if (task.mode === "immediate" && task.robotId) {
@@ -482,6 +599,29 @@ async function handleTranscript({ text, heardBy, source, cmdId, audioFile = null
   }
 }
 
+/* ---------------- 语音指令串行队列 ---------------- */
+/**
+ * handleTranscript 内部有 await（parseWithLlm），既不能被 message 回调的同步 try/catch 兜住，
+ * 也不能并发执行：两条指令会读到同一份 tasks 快照、各自 allocTaskId 并整表发布，
+ * 结果就是撞 id + 互相覆盖。这里用 Promise 链做先进先出串行队列，
+ * 每个任务独立 try/catch：单条失败只记日志，不阻塞后续、也不至于崩进程。
+ */
+let transcriptQueue = Promise.resolve();
+let transcriptQueueDepth = 0;
+function enqueueTranscript(payload) {
+  transcriptQueueDepth += 1;
+  if (transcriptQueueDepth > 8) {
+    console.warn(`[queue] 语音指令积压 ${transcriptQueueDepth} 条（ASR/LLM 过慢？）`);
+  }
+  transcriptQueue = transcriptQueue
+    .then(() => handleTranscript(payload))
+    .catch((e) => {
+      console.error(`[queue] 处理语音指令失败（cmdId=${payload && payload.cmdId ? payload.cmdId : "?"}）：`, e);
+    })
+    .finally(() => { transcriptQueueDepth -= 1; });
+  return transcriptQueue;
+}
+
 function armPendingTimer(cmdId) {
   clearTimeout(pendingTimers.get(cmdId));
   pendingTimers.set(cmdId, setTimeout(() => {
@@ -509,6 +649,19 @@ function handleVoiceCmd(msg) {
     raiseEvent("info", `语音指令已拒绝：「${cmd.transcript}」`);
   }
 }
+
+/* ---------------- 进程级兜底 ---------------- */
+// 异步链路已由 enqueueTranscript 捕获，但 MQTT 回调、定时器、第三方库仍可能抛到顶层。
+// 网关是 systemd 常驻服务（云端 qbot-gateway），崩一次就整条语音链路中断；
+// 而它的运行态（siteMap / tasks / policy）全部来自 retained MQTT 主题，可随时重建，
+// 所以策略是"记录并继续"：宁可降级运行，也不要反复崩溃重启。
+// 若日志里出现找不到原因的反复报错，请人工重启一次（此时内存状态可能已不自洽）。
+process.on("unhandledRejection", (reason) => {
+  console.error("[fatal] 未处理的 Promise 拒绝（已记录，进程继续）：", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[fatal] 未捕获异常（已记录，进程继续）：", err);
+});
 
 /* ---------------- MQTT 主流程 ---------------- */
 const client = mqtt.connect(MQTT_URL);
@@ -543,7 +696,7 @@ client.on("message", (topic, buf) => {
   try { msg = JSON.parse(buf.toString()); } catch { return; }
   try {
     if (topic === T.siteMap()) { siteMap = msg; return; }
-    if (topic === T.fleetTasks()) { tasks = Array.isArray(msg) ? msg : []; return; }
+    if (topic === T.fleetTasks()) { syncTasksFromSnapshot(msg); return; }
     if (topic === T.voicePolicy()) {
       policy = { ...DEFAULT_POLICY, ...msg, requireConfirm: { ...DEFAULT_POLICY.requireConfirm, ...(msg.requireConfirm ?? {}) } };
       console.log(`[policy] 更新：${JSON.stringify(policy)}`);
@@ -553,7 +706,7 @@ client.on("message", (topic, buf) => {
     if (topic === T.voiceText()) {
       // 测试注入：{ text, robotId? }
       if (!msg.text) return;
-      handleTranscript({
+      enqueueTranscript({
         text: String(msg.text), heardBy: msg.robotId ?? [...robots.keys()][0] ?? "QB-01",
         source: "text", cmdId: `vc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
       });
@@ -612,7 +765,7 @@ client.on("message", (topic, buf) => {
         return;
       }
       console.log(`[asr] ${msg.robotId}: 「${text}」`);
-      handleTranscript({ text, heardBy: msg.robotId, source: "voice", cmdId, audioFile });
+      enqueueTranscript({ text, heardBy: msg.robotId, source: "voice", cmdId, audioFile });
     }
   } catch (e) {
     console.error(`[error] 处理 ${topic} 失败：`, e);

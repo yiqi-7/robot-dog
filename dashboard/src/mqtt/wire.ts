@@ -72,6 +72,10 @@ export interface TaskMsg {
   updatedAt: number
   /** 任务来源：manual 看板手工 / voice 语音指令；缺省视为 manual */
   source?: "manual" | "voice"
+  /** 单条任务的版本号（跨端合并用，缺省视为 0），语义见下方 taskRevOf */
+  rev?: number
+  /** 终态原因（如「Nav2 未能到达目标点」「已取消」），仅机器人回写终态时携带 */
+  statusNote?: string
 }
 
 /* ---------------- 语音指令 ---------------- */
@@ -172,3 +176,52 @@ export const taskFromMsg = (m: TaskMsg): Task => ({
   createdAt: new Date(m.createdAt),
   updatedAt: new Date(m.updatedAt),
 })
+
+/* ---------------- 任务合并协议 ---------------- */
+/**
+ * 任务版本号 rev 的语义（跨端合并协议，C++ 侧 task_runner_tasks.cpp、
+ * 网关侧 voice-gateway.js 与看板三处必须一致）：
+ *   · rev 是【单条任务对象】的单调递增整数版本号，字段缺省视为 0；
+ *   · 谁改了这条任务，就把这条的 rev 改成「已知较大 rev + 1」；
+ *   · 两端同一条任务不一致时【以 rev 大者为准】，rev 相等即同一版本；
+ *   · 老版本不带 rev 的消息按 0 处理，保证向前兼容。
+ */
+export const taskRevOf = (t: { rev?: number }): number => {
+  const n = Number(t.rev)
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
+/** 本端改动一条任务后调用：把 rev 提到「已知较大值 + 1」，否则会被别端回写打回 */
+export const bumpTaskRev = <T extends { rev?: number }>(t: T): T => ({
+  ...t,
+  rev: taskRevOf(t) + 1,
+})
+
+/**
+ * 按 id + rev 合并两份任务数组（base 为基准，patch 为增量）。
+ * base 顺序不变；patch 里 base 没有的新 id 排到最前（沿用「新任务在前」语义）。
+ *
+ * 为什么必须合并而不能整表替换：fleet/tasks 是 retained 全量数组，机器人、
+ * 语音网关、看板三方都往里写。任一端收到消息就整表覆盖本地状态，
+ * 「收到快照 → 状态落地」这段时间内别端新增或更新的任务就会静默消失。
+ */
+export function mergeTasksById<T extends { id: number; rev?: number }>(
+  base: T[],
+  patch: T[],
+): T[] {
+  const out = Array.isArray(base) ? base.slice() : []
+  const index = new Map<string, number>()
+  out.forEach((t, i) => index.set(String(t.id), i))
+  const added: T[] = []
+  for (const p of Array.isArray(patch) ? patch : []) {
+    const key = String(p.id)
+    const i = index.get(key)
+    if (i === undefined) {
+      added.push(p)
+      index.set(key, -1) // 防止 patch 内同 id 重复插入
+      continue
+    }
+    if (i >= 0 && taskRevOf(p) > taskRevOf(out[i])) out[i] = p
+  }
+  return added.length ? added.concat(out) : out
+}

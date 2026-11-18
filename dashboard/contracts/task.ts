@@ -74,4 +74,8 @@ export interface Task {
   updatedAt: Date;
   /** 任务来源：manual 看板手工 / voice 语音指令；缺省视为 manual */
   source?: "manual" | "voice";
+  /** 单条任务的版本号（跨端合并用，缺省视为 0），语义见 src/mqtt/wire.ts taskRevOf */
+  rev?: number;
+  /** 终态原因（如「Nav2 未能到达目标点」「已取消」），仅机器人回写终态时携带 */
+  statusNote?: string;
 }
