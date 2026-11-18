@@ -33,6 +33,14 @@
 | `{P}/voice/policy` | 看板 ⇄ 网关 | ✅ | 确认策略（看板设置，网关执行） |
 | `{P}/voice/text` | 任意 → 网关 | ❌ | 测试注入：文本直接当语音指令处理（绕过 ASR） |
 
+**订阅方必须按 `ts`/`cmdId` 过滤**：`{P}/voice/commands` 是 retained 全量快照，且每次状态
+变更（确认/拒绝/超时/失败）都会重发整份。只订一条就想拿"刚说的这句"的脚本，实测会把上一轮
+`accepted` 的旧回执当成新指令判定（本项目 P5/P6 调试期误判过两次）。看板做弹窗提示同理。
+
+**待确认超时**：`pending_confirm` 指令在 600s 内无人确认 → 网关自动置 `rejected`
+（`reason: "确认超时"`，见 `armPendingTimer`）。**未确认的语音指令不会创建 fleet 任务**——
+任务只在确认或策略直通（如 `charging` 免确认、`estopDirect`）后才写入 `{P}/fleet/tasks`。
+
 ---
 
 ## 3. 机器人端对接
@@ -242,7 +250,9 @@ ros2 topic pub -1 /voice/ptt std_msgs/msg/Bool "{data: false}"  # 手动收尾�
 注意：节点发布前会等待 `voice/audio_pcm` 的订阅者匹配（最多 10s）。DDS 发现未完成时
 直接发布，第一段语音会被静默丢弃——这是实测踩过的坑。
 
-### 9.2 TTS 播报：`quadruped_mqtt_bridge/mqtt_bridge`
+### 9.2 TTS 播报：`quadruped_mqtt_bridge/voice_link`
+
+> 三节点拆分（提交 9efa299）后 TTS 由 `voice_link` 持有，`mqtt_bridge` 只管遥测/告警/遗嘱。
 
 收到 `{P}/robots/{id}/tts` 后：转发 ROS 话题 `voice/tts_text`（供看板/日志），
 同时入播报队列，用 piper 合成中文语音再 `aplay` 播放（队列串行，连发不互相打断）：

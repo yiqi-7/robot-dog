@@ -10,7 +10,7 @@
 | 目录 | 内容 |
 |---|---|
 | `src/quadruped_sim/` | ROS 2 仿真功能包：机器狗模型、C++ 步态、传感器、SLAM/Nav2 |
-| `src/quadruped_mqtt_bridge/` | 上云桥接：MQTT 状态/任务/语音（§3.1 上行 + piper 播报）、视觉快照、麦克风采集（真机也要装） |
+| `src/quadruped_mqtt_bridge/` | 上云桥接，按职责拆 4 节点：`mqtt_bridge` 遥测/告警/遗嘱、`task_runner` 看板与语音派单执行、`voice_link` 语音上行+TTS 播报、`deadman_guard` 心跳看门狗；另含视觉快照、麦克风采集（真机也要装。职责表见包内 README） |
 | `src/quadruped_explorer/` | 自主导航：航点巡逻、卡死重试（不依赖 Gazebo，真机也要装） |
 | `quadruped-ops/` | 厂区监控运维看板（局域网 MQTT 队管系统） |
 
@@ -64,7 +64,7 @@ robot-dog/
 | 键盘遥控 | teleop_twist_keyboard（支持前进/后退/转向） | ✅ |
 | 静态地图定位 | AMCL + map_server（`map:=<yaml>` 一键切换） | ✅ |
 | 多航点巡逻 | patrol_node（C++）：航点参数可配、失败自愈、进度上报；5 航点环线（北走廊→墙洞东→缝北口→货架南→出生点），单航点失败自动重试 2 次后跳过继续 | ✅ |
-| 运维看板联动 | mqtt_bridge 把位姿/任务/巡逻进度上报看板 | ✅ |
+| 运维看板联动 | mqtt_bridge 上报位姿/任务/巡逻进度；task_runner 执行派单并回写终态；deadman_guard 在执行端失联时切断速度链路 | ✅ |
 
 ## 快速开始
 
