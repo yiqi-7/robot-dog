@@ -23,6 +23,17 @@ cd /run/media/wby/shuju/Document/robot-dog/deploy
 ./mode1_local_all.sh            # 一条命令起全部
 ```
 
+> **前提**：模式 1 需要本地运行副本 `quadruped-ops/`（含 `node_modules/`、`dist/`、
+> `models/sensevoice/`）。它**不入库**（见根 README「项目结构」），全新 clone 后
+> 必须先备好，否则 `mode1_local_all.sh` 会在前置检查处直接退出。
+>
+> ```bash
+> cd /run/media/wby/shuju/Document/robot-dog
+> cp -a dashboard quadruped-ops     # 或从备份拷回
+> cd quadruped-ops && npm install && npm run build
+> # 再把 ASR 模型放到 models/sensevoice/（model.int8.onnx + tokens.txt）
+> ```
+
 启动内容（按顺序）：
 
 1. `mosquitto`（systemd，监听 1883 + 8083 WebSocket）
@@ -146,10 +157,13 @@ cd /opt/qbot/deploy
 | 1883 | MQTT TCP | 端侧四个节点上报/订阅 |
 | 8083 | MQTT over WebSocket | 浏览器看板连接 |
 | 8554 | RTSP | 端侧 ffmpeg 推流入口 |
-| 8889 | WebRTC/WHEP | 浏览器拉流 |
+| 8889 | WebRTC/WHEP（信令） | 浏览器拉流，TCP |
+| 8189 | WebRTC 媒体 | MediaMTX 默认 `webrtcLocalUDPAddress :8189`，**UDP** |
 | 8080 | HTTP | 看板页面 |
 
-云端安全组需放行 **1883 / 8083 / 8554 / 8889 / 8080**。
+云端安全组需放行 TCP **1883 / 8083 / 8554 / 8889 / 8080**，以及 **UDP 8189**（WebRTC 媒体面）。
+
+> 漏掉 UDP 8189 的典型表现：WHEP 协商返回 201/200、看板显示『已连接』，但画面永远不亮。这时不要去查 `paths`，先查安全组的 UDP 端口。
 
 ---
 

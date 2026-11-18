@@ -22,7 +22,7 @@
 | 建图与导航 | SLAM Toolbox 在线建图 / 预建图定位 + Nav2 规划控制 |
 | 上云桥接 | 4 个职责单一节点：`mqtt_bridge`(遥测/告警/遗嘱) `task_runner`(派单执行) `voice_link`(语音上行+TTS) `deadman_guard`(心跳看门狗) |
 | 视觉 | `image_sender`：JPEG 快照(MQTT 兜底) + H.264 推流(RTSP→WebRTC 主通道) |
-| 语音 | 端侧录音 → **Opus 压缩(15:1)** → MQTT 上行 → 云端 ASR(SenseVoice) → LLM/规则决策 → 任务下发 + TTS 播报 |
+| 语音 | 端侧录音 → **Opus 压缩（实测 12.9:1 ~ 16:1）** → MQTT 上行 → 云端 ASR(SenseVoice) → LLM/规则决策 → 任务下发 + TTS 播报 |
 | 运维看板 | React + Vite 单页应用，实时遥测、地图、任务派单、语音指令、视频监控 |
 | 安全 | 心跳看门狗 + 输入超时归零 + 碰撞监控，三级速度链 (`cmd_vel_in → cmd_vel → 底盘`) |
 
@@ -72,7 +72,7 @@ sudo apt install libopencv-dev ffmpeg
 ### 编译
 
 ```bash
-cd ~/ros2_ws          # 或本项目所在工作区
+cd /run/media/wby/shuju/Document/robot-dog   # 本工作区（后面命令用 $(pwd)）
 colcon build --symlink-install
 source install/setup.bash
 ```
@@ -140,8 +140,12 @@ robot-dog/
 
 | 方案 | 3.6 秒语音体积 | 512kbit 上行耗时 |
 |---|---|---|
-| 原始 PCM base64 | 150 KB | 约 2.3 s（理想）/ 数十秒（15% 丢包） |
-| **Ogg/Opus 16kbps** | **8.2 KB** | **约 0.1 s** |
+| 原始 PCM（112 KB 裸流）→ base64 | 150 KB | 约 2.3 s（理想）/ 数十秒（15% 丢包） |
+| **Ogg/Opus（实测 5 KB ≈ 11 kbps）→ base64** | **7 KB** | **约 0.1 s** |
+
+> 口径说明：112 KB 是裸 PCM，150 KB 是它 base64 编码后（×4/3）的实际上行体积。
+> Opus 同理：5 KB 裸流、7 KB base64。压缩比按裸流算 ≈22:1，按上行字节算 ≈21:1；
+> 若只算「PCM ↔ 上行」则是 112:7 ≈ 16:1，文档取保守区间 12.9:1 ~ 16:1。
 
 端侧用 ffmpeg 编码 Opus（失败自动回退 PCM），云端网关解码后送 ASR。
 压缩比实测 **12.9:1 ~ 16:1**，ASR 识别结果不受影响。
@@ -172,7 +176,7 @@ robot-dog/
 | 语音压缩 | 3.6s：112 KB PCM → 5 KB Opus → 7 KB base64 |
 | 云端中转 RTT | 851 ~ 1590 ms（均值 1192 ms，抖动 ±304 ms） |
 | MQTT 断线恢复 | 10 ~ 16 s（`mosquitto_reconnect_delay_set(2, 10)`） |
-| 弱网矩阵测试 | 27/28 通过（R1~R5 档位：延迟/抖动/丢包/乱序/断网） |
+| 弱网矩阵测试 | 27/28 项通过（六档 R0~R5：基线/延迟/抖动/丢包/乱序/断网） |
 
 ---
 
