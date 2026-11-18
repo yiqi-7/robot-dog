@@ -241,15 +241,18 @@ if [[ "$NO_ROS" -eq 0 ]]; then
   [[ -f "$LAUNCH" ]] || die "launch 文件不存在: $LAUNCH"
 
   stop_ros
-  # H2：本机没有 mediamtx 时，把 rtsp 指到 127.0.0.1 只会让 ffmpeg 立刻失败，
-  # 而 image_sender 在 ffmpeg 挂掉后会连 JPEG 兜底帧一起停（见 image_sender.cpp
-  # 的 `if (!ffmpeg_pipe_) return;`）。所以这种情况下保持 launch 原值不动。
+  # 本机没有 mediamtx 时的正确做法是**关掉 RTSP 推流**，而不是"保持原值"：
+  # 保持原值 = 按 launch 里的 43.172.91.67 把画面推到公网云端，与模式 1
+  # "本地全栈、不出网"的语义相反（实测确实推上去了）；
+  # 指向 127.0.0.1 又会让 ffmpeg 空转重连。image_sender 已有 rtsp_enable
+  # 参数开关，且 MQTT 兜底帧不再依赖 ffmpeg 存活。
   trap 'restore_rtsp "$LAUNCH"' EXIT INT TERM HUP
+  RTSP_ARG=""
   if [[ -x /usr/local/bin/mediamtx ]]; then
     patch_rtsp "$LAUNCH" "127.0.0.1"
   else
-    warn "本机无 mediamtx，保持 launch 的 rtsp_server 原值不动"
-    warn "  （若强行指向不可达地址，ffmpeg 失败后 JPEG 兜底帧也会停）"
+    RTSP_ARG="rtsp_enable:=false"
+    info "本机无 mediamtx → 关闭 RTSP 推流（rtsp_enable:=false），只发 MQTT 兜底帧"
   fi
 
   info "启动 ROS2 仿真（broker_host=${BROKER_HOST}）…"
@@ -260,7 +263,8 @@ if [[ "$NO_ROS" -eq 0 ]]; then
       exec ros2 launch quadruped_sim quadruped_gz.launch.py \
         gui:=false rviz:=false nav:=true gait:=champ teleop:=false patrol:=false \
         map:=${MAP} \
-        broker_host:=${BROKER_HOST} broker_port:=${MQTT_PORT}
+        broker_host:=${BROKER_HOST} broker_port:=${MQTT_PORT} \
+        ${RTSP_ARG}
     " >"$LOG_ROS" 2>&1 & )
 
   info "等待 ${WAIT_SEC} 秒让 Gazebo/Nav2 初始化…"

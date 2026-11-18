@@ -51,6 +51,9 @@ public:
     broker_port_ = declare_parameter("broker_port", 1883);
     rtsp_server_ = declare_parameter("rtsp_server", "43.172.91.67");
     rtsp_port_  = declare_parameter("rtsp_port", 8554);
+    // 是否推 RTSP 视频流。模式 1（本地全栈、没有本地中转）必须传 false：
+    // 否则 ffmpeg 会按默认地址把画面推到公网云端，与"模式 1 不出网"的语义相反。
+    rtsp_enable_ = declare_parameter("rtsp_enable", true);
     width_  = declare_parameter("width", 640);
     height_ = declare_parameter("height", 480);
     // MQTT 快照独立分辨率：与 RTSP 流解耦，兜底帧不需要和视频流同分辨率
@@ -58,6 +61,10 @@ public:
     snapshot_height_ = declare_parameter("snapshot_height", 360);
     max_snapshot_bytes_ = declare_parameter("max_snapshot_bytes", 200 * 1024);
     fps_    = declare_parameter("fps", 15.0);
+    if (jpeg_fps_ <= 0.0) {
+      RCLCPP_WARN(get_logger(), "jpeg_fps=%.2f 非法，回退到 1.0", jpeg_fps_);
+      jpeg_fps_ = 1.0;
+    }
 
     cam_topic_  = declare_parameter("cam_topic", "rgb_camera");
     topic_prefix_ = declare_parameter("topic_prefix", "qbot/v1");
@@ -128,6 +135,11 @@ private:
   // ---------------- ffmpeg 子进程管理 ----------------
   void startFfmpeg()
   {
+    // 未启用 RTSP 时根本不拉起 ffmpeg：省掉一个必然失败的子进程和它的重连日志
+    if (!rtsp_enable_) {
+      RCLCPP_INFO(get_logger(), "RTSP 推流已禁用（rtsp_enable=false），只发 MQTT 兜底帧");
+      return;
+    }
     // 输入：裸 RGB24 像素经 stdin 管道喂入（yuv420p 转换交给 ffmpeg 滤镜）
     // 输出：RTSP TCP 推流到 MediaMTX
     const std::string cmd =
@@ -190,7 +202,10 @@ private:
   // ---------------- 帧回调：烧录后双路分发 ----------------
   void onImage(const sensor_msgs::msg::Image::SharedPtr & msg)
   {
-    if (!ffmpeg_pipe_) return;   // 推流挂了就先不烧 JPEG（避免半死状态）
+    // 注意：这里不能因为 ffmpeg 挂了就整体 return。原先第一行是
+    // `if (!ffmpeg_pipe_) return;`，结果是 ffmpeg 连不上（离线、云端没起、
+    // 或本机没配中转）时，连本该独立的 MQTT 兜底帧也一起不发，看板直接黑屏——
+    // "双路上报"退化成"单路失败即全灭"。现在两条路互不牵连。
 
     // rgb8 -> cv::Mat（零拷贝头），再转 BGR（OpenCV JPEG/putText 期望 BGR）
     cv::Mat rgb(msg->height, msg->width, CV_8UC3,
@@ -199,14 +214,16 @@ private:
     cv::cvtColor(rgb, bgr, cv::COLOR_RGB2BGR);
     burnOsd(bgr);
 
-    // ① RTSP 路：裸 BGR24 喂 ffmpeg stdin（ffmpeg 内部转 yuv420p + 编码）
-    const size_t total = bgr.total() * bgr.elemSize();
-    if (fwrite(bgr.data, 1, total, ffmpeg_pipe_) != total || ferror(ffmpeg_pipe_)) {
-      RCLCPP_WARN(get_logger(), "ffmpeg 管道断开，尝试重启子进程");
-      pclose(ffmpeg_pipe_);
-      ffmpeg_pipe_ = nullptr;
-      std::thread([this]() { startFfmpeg(); }).detach();
-      return;
+    // ① RTSP 路（可选）：裸 BGR24 喂 ffmpeg stdin（ffmpeg 内部转 yuv420p + 编码）
+    if (rtsp_enable_ && ffmpeg_pipe_) {
+      const size_t total = bgr.total() * bgr.elemSize();
+      if (fwrite(bgr.data, 1, total, ffmpeg_pipe_) != total || ferror(ffmpeg_pipe_)) {
+        RCLCPP_WARN(get_logger(), "ffmpeg 管道断开，尝试重启子进程");
+        pclose(ffmpeg_pipe_);
+        ffmpeg_pipe_ = nullptr;
+        std::thread([this]() { startFfmpeg(); }).detach();
+        // 不 return：下面的 MQTT 兜底帧照发
+      }
     }
 
     // ② MQTT 路：按 jpeg_fps 节流发 JPEG 快照
@@ -247,6 +264,7 @@ private:
   long jpeg_quality_;
   double jpeg_fps_, fps_;
   int broker_port_, rtsp_port_, width_, height_;
+  bool rtsp_enable_ = true;
 
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr sub_cam_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_odom_;
