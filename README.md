@@ -1,267 +1,182 @@
-# Robot Dog 🐕 — 厂区四足机器人项目
+# Robot Dog 🐕 — 厂区四足巡检机器人
 
-基于 **ROS 2 (Lyrical) + Gazebo (gz sim 10)** 的四足机器狗仿真与运维项目。
-目标是在仿真厂区里实现建图、导航、键盘遥控，并对接 MQTT 运维看板与语音指令网关。
+**中文** | [English](README.en.md)
 
-![ROS2](https://img.shields.io/badge/ROS%202-Lyrical-blue) ![Gazebo](https://img.shields.io/badge/gz%20sim-10-orange) ![Platform](https://img.shields.io/badge/平台-Ubuntu%2026.04-green)
+基于 **ROS 2 (Lyrical) + Gazebo (gz sim 10)** 的四足机器狗仿真与运维项目：
+在仿真厂区里完成建图、导航、巡逻，并通过 MQTT 对接浏览器运维看板与语音指令网关，
+端侧经 **腾讯云中转** 实现远程控制。
 
-## 仓库包含两部分
+![ROS2](https://img.shields.io/badge/ROS%202-Lyrical-blue)
+![Gazebo](https://img.shields.io/badge/gz%20sim-10-orange)
+![Platform](https://img.shields.io/badge/平台-Ubuntu%2026.04-green)
+![MQTT](https://img.shields.io/badge/MQTT-mosquitto-purple)
+![WebRTC](https://img.shields.io/badge/视频-WebRTC%2FWHEP-ff69b4)
 
-| 目录 | 内容 |
+---
+
+## 这个项目做了什么
+
+| 能力 | 实现 |
 |---|---|
-| `src/quadruped_sim/` | ROS 2 仿真功能包：机器狗模型、C++ 步态、传感器、SLAM/Nav2 |
-| `src/quadruped_mqtt_bridge/` | 上云桥接，按职责拆 4 节点：`mqtt_bridge` 遥测/告警/遗嘱、`task_runner` 看板与语音派单执行、`voice_link` 语音上行+TTS 播报、`deadman_guard` 心跳看门狗；另含视觉快照、麦克风采集（真机也要装。职责表见包内 README） |
-| `src/quadruped_explorer/` | 自主导航：航点巡逻、卡死重试（不依赖 Gazebo，真机也要装） |
-| `quadruped-ops/` | 厂区监控运维看板（局域网 MQTT 队管系统） |
+| 四足步态 | CHAMP 通用控制器 + 自研 `gait_controller`，trot 步态实测 0.35 m/s |
+| 建图与导航 | SLAM Toolbox 在线建图 / 预建图定位 + Nav2 规划控制 |
+| 上云桥接 | 4 个职责单一节点：`mqtt_bridge`(遥测/告警/遗嘱) `task_runner`(派单执行) `voice_link`(语音上行+TTS) `deadman_guard`(心跳看门狗) |
+| 视觉 | `image_sender`：JPEG 快照(MQTT 兜底) + H.264 推流(RTSP→WebRTC 主通道) |
+| 语音 | 端侧录音 → **Opus 压缩(15:1)** → MQTT 上行 → 云端 ASR(SenseVoice) → LLM/规则决策 → 任务下发 + TTS 播报 |
+| 运维看板 | React + Vite 单页应用，实时遥测、地图、任务派单、语音指令、视频监控 |
+| 安全 | 心跳看门狗 + 输入超时归零 + 碰撞监控，三级速度链 (`cmd_vel_in → cmd_vel → 底盘`) |
 
-两层通过 **MQTT** 通信：机器狗上报遥测、接收任务；看板负责可视化与派单。
-接口约定见 [`quadruped-ops/MQTT-INTERFACE.md`](quadruped-ops/MQTT-INTERFACE.md)。
+---
 
-> `quadruped-ops/` 为 vendored 引入，**非本项目原创**；其体积超限的模型/二进制未入库，
-> 详见 [`quadruped-ops/README-IN-REPO.md`](quadruped-ops/README-IN-REPO.md)。
+## 两种部署模式
 
-## 项目结构
+项目支持两种形态，**先单机跑通再上云**：
 
-```
-robot-dog/
-├── src/                      # ROS 2 工作区源码
-│   ├── champ/                # CHAMP 通用四足步态控制器（vendored 上游，含本项目适配补丁）
-│   ├── quadruped_champ_config/  # CHAMP 适配本机器狗的配置包（yaml / launch）
-│   ├── quadruped_sim/        # 四足机器狗仿真功能包（模型/步态/传感器/Nav2 参数）
-│   ├── quadruped_mqtt_bridge/ # 上云桥接（MQTT/语音/视觉快照，真机也要装）
-│   └── quadruped_explorer/   # 自主导航（航点巡逻，真机也要装）
-│       ├── src/              # C++ 节点源码
-│       │   ├── gait_controller.cpp   # 步态控制器（核心）
-│       │   ├── odom_pub.cpp          # 里程计 TF 广播
-│       │   ├── champ_joint_relay.cpp # CHAMP 关节指令 -> gz 控制器中继
-│       │   └── camera_info_pub.cpp   # 深度相机内参补发
-│       ├── scripts/          # gz_window_minimize.c（启动后把 Gazebo 窗口收进任务栏）
-│       ├── launch/           # 启动文件（一键拉起全部栈）
-│       ├── urdf/             # 机器狗 xacro 模型
-│       ├── worlds/           # 仿真厂区世界
-│       ├── config/           # Nav2 / RViz 配置
-│       ├── CMakeLists.txt
-│       └── package.xml
-├── quadruped-ops/            # 厂区监控运维看板（MQTT 队管系统，见其 README-IN-REPO.md）
-├── models/                   # 外部模型文件（语音 TTS 等，体积大不入库部分见 .gitignore）
-├── maps/                     # SLAM 建图输出（运行时生成）
-├── captures/                 # 实验截图（运行时生成）
-├── recordings/               # 录制数据（运行时生成）
-└── README.md
-```
-
-## 功能一览
-
-| 模块 | 说明 | 状态 |
+| | 模式 1：本地全栈 | 模式 2：云端分离 |
 |---|---|---|
-| 机器狗模型 | xacro：18 关节、平底足垫、站立半径 0.30 m | ✅ |
-| 传感器 | IMU 100Hz + 360° 激光雷达 + 前向 8 m 深度相机 | ✅ |
-| 步态控制 | C++：对角步态 + 足端运动学逆解 + 速度闭环制动 + 软启动 | ✅ |
-| CHAMP 步态 | vendored CHAMP 通用步态控制器，`gait:=champ` 可切换 | ✅ |
-| 仿真世界 | 厂区 20×14 m 围墙 + 货架/储罐/货箱 | ✅ |
-| SLAM 建图 | slam_toolbox 在线建图 | ✅ |
-| 导航 | Nav2 全栈（8 节点 + 碰撞监控） | ✅ |
-| 键盘遥控 | teleop_twist_keyboard（支持前进/后退/转向） | ✅ |
-| 静态地图定位 | AMCL + map_server（`map:=<yaml>` 一键切换） | ✅ |
-| 多航点巡逻 | patrol_node（C++）：航点参数可配、失败自愈、进度上报；5 航点环线（北走廊→墙洞东→缝北口→货架南→出生点），单航点失败自动重试 2 次后跳过继续 | ✅ |
-| 运维看板联动 | mqtt_bridge 上报位姿/任务/巡逻进度；task_runner 执行派单并回写终态；deadman_guard 在执行端失联时切断速度链路 | ✅ |
+| 场景 | 本地读代码 / 单机演示 | 生产部署 / 远程控制 |
+| ROS2 | TITAN_V | TITAN_V |
+| MQTT + 视频中转 + 语音网关 + 看板 | TITAN_V 全在本机 | 腾讯云 `43.172.91.67` |
+
+```bash
+cd deploy
+
+# 模式 1：单机起全部（ROS2 + broker + 语音网关 + 看板）
+./switch_config.sh local && ./mode1_local_all.sh
+
+# 模式 2：云端
+./mode2_cloud_side.sh                       # 在 43.172.91.67 上
+./mode2_robot_side.sh --host 43.172.91.67   # 在 TITAN_V 上
+
+./stop_all.sh local|cloud|robot|all
+```
+
+详细说明见 **[deploy/README-DEPLOY.md](deploy/README-DEPLOY.md)**。
+
+---
 
 ## 快速开始
 
 ### 依赖
 
 ```bash
-# ROS 2 Lyrical + Gazebo（gz sim 10）
-sudo apt install ros-lyrical-desktop ros-lyrical-ros-gz ros-lyrical-navigation2 \
-                 ros-lyrical-nav2-bringup ros-lyrical-slam-toolbox ros-lyrical-teleop-twist-keyboard
+# ROS 2 Lyrical + Gazebo (gz sim 10)
+sudo apt install ros-lyrical-desktop ros-lyrical-navigation2 \
+     ros-lyrical-slam-toolbox ros-lyrical-ros-gz
+# MQTT 依赖
+sudo apt install libmosquitto-dev mosquitto mosquitto-clients nlohmann-json3-dev
+# 视觉 / 语音
+sudo apt install libopencv-dev ffmpeg
 ```
 
 ### 编译
 
 ```bash
-cd ~/robot-dog
-source /opt/ros/lyrical/setup.bash
-colcon build --symlink-install --packages-select quadruped_sim quadruped_mqtt_bridge quadruped_explorer
+cd ~/ros2_ws          # 或本项目所在工作区
+colcon build --symlink-install
 source install/setup.bash
 ```
 
-### 一键启动（Gazebo GUI + RViz + SLAM + Nav2）
+### 启动（模式 2，连云端）
 
 ```bash
 ros2 launch quadruped_sim quadruped_gz.launch.py \
-    gui:=true rviz:=true nav:=true gait:=true teleop:=false
+  gui:=false rviz:=false nav:=true gait:=champ teleop:=false patrol:=false \
+  map:=$(pwd)/maps/factory_full.yaml \
+  broker_host:=43.172.91.67 broker_port:=1883
 ```
 
-启动参数说明：
-
-| 参数 | 默认 | 说明 |
-|---|---|---|
-| `gui` | true | Gazebo GUI（false 时仅后台服务器，省资源） |
-| `rviz` | true | 启动 RViz2 可视化 |
-| `nav` | true | 启动 slam_toolbox + Nav2 导航栈 |
-| `gait` | true | 启动 C++ 步态控制器 |
-| `teleop` | false | 键盘遥控（需要交互式终端，建议手动另开） |
-| `broker_host` | 127.0.0.1 | MQTT broker 主机；远程/中转部署填服务器 IP |
-| `broker_port` | 1883 | MQTT broker 端口 |
-
-### 键盘遥控
+### 看板
 
 ```bash
-# 需要交互式终端（launch 里启动会因无 TTY 退出）
-ros2 run teleop_twist_keyboard teleop_twist_keyboard
+# 浏览器打开
+http://43.172.91.67:8080          # 模式 2
+http://127.0.0.1:8080             # 模式 1
 ```
 
-按键：`i` 前进 / `,` 后退 / `j` 左转 / `l` 右转 / `k` 停止。
+---
 
-### 导航目标
+## 项目结构
 
-RViz2 工具栏选择 **Nav2 Goal**，在地图上点一个位置拖动定朝向，机器狗自动规划路径并走过去。
+```
+robot-dog/
+├── src/
+│   ├── champ/                     # CHAMP 四足步态控制器（vendored + 本项目补丁）
+│   ├── quadruped_champ_config/    # CHAMP 适配本机的参数包
+│   ├── quadruped_sim/             # 仿真包：模型、步态、传感器、Nav2 参数
+│   ├── quadruped_mqtt_bridge/     # 上云桥接：4 节点 + 视觉 + 语音采集
+│   └── quadruped_explorer/        # 自主导航：航点巡逻、卡死重试
+├── dashboard/                     # 运维看板（React + Vite）+ 语音网关
+├── deploy/                        # 两种模式的部署脚本与 MediaMTX/Mosquitto 配置
+├── tools/weaknet/                 # 弱网注入与矩阵测试脚本
+├── maps/                          # 预建地图（factory_full.yaml 等）
+└── README.md / README.en.md
+```
 
-## 机器狗规格
+> `quadruped-ops/` 是 `dashboard/` 的运行副本（含 node_modules 与 290MB 模型），
+> **不入库**，按需在本地保留即可。
 
-| 项 | 值 |
+---
+
+## 关键设计
+
+### 节点拆分：单一职责 + 松耦合
+
+早期是一个大 `mqtt_bridge` 节点包办遥测、派单、语音、安全。问题很实际：
+任何一处出问题都要重启全部功能，语音大帧会顶掉遥测的 keepalive。
+
+拆成 4 个独立节点后，各自持有独立 MQTT 连接、独立失败域：
+
+| 节点 | 职责 | 订阅 |
+|---|---|---|
+| `mqtt_bridge` | 遥测 1Hz、告警、LWT 遗嘱 | 无 |
+| `task_runner` | 接收 `cmd` 派单、执行导航、回写任务状态 | `robots/+/cmd` |
+| `voice_link` | 语音上行、TTS 播报、piper 合成 | `robots/+/tts` |
+| `deadman_guard` | 心跳监控、速度旁路与归零 | `safety/heartbeat` |
+
+### 语音压缩：为什么必须做
+
+课程接口约定 `pcm_s16le` + base64，并注明"局域网可直传"。但实际部署是**公网弱网**：
+
+| 方案 | 3.6 秒语音体积 | 512kbit 上行耗时 |
+|---|---|---|
+| 原始 PCM base64 | 150 KB | 约 2.3 s（理想）/ 数十秒（15% 丢包） |
+| **Ogg/Opus 16kbps** | **8.2 KB** | **约 0.1 s** |
+
+端侧用 ffmpeg 编码 Opus（失败自动回退 PCM），云端网关解码后送 ASR。
+压缩比实测 **12.9:1 ~ 16:1**，ASR 识别结果不受影响。
+
+### 视频：双通道
+
+- **主通道**：`image_sender` → ffmpeg(H.264, 禁 B 帧) → `rtsp://<中转>:8554/cam/<id>` → MediaMTX → 浏览器 WHEP
+- **兜底通道**：MQTT 二进制 JPEG 快照（640×360 / q90 / 1fps，实测约 17.7 KB/帧）
+- 主通道挂了看板自动降级到快照，快照也断了才显示静态占位图
+
+细节见 **[dashboard/VIDEO-LINK.md](dashboard/VIDEO-LINK.md)**。
+
+### 安全：三层防护
+
+1. `collision_monitor` — 激光雷达碰撞检测
+2. `deadman_guard` — 心跳 >3s 切断、速度输入 >0.5s 归零（底盘层最后手段）
+3. 端侧 LWT 遗嘱 — 掉线时 broker 代发离线状态
+
+---
+
+## 实测数据
+
+| 指标 | 结果 |
 |---|---|
-| 站立半径 | 0.30 m（足端 (±0.24, ±0.18)） |
-| 站立高度 | 0.315 m |
-| 大腿/小腿 | 各 0.13 m |
-| 机身 | 0.36 × 0.24 × 0.08 m，6 kg |
-| 关节 | 4 腿 × 3 关节（外摆/髋/膝），PD 位置控制 |
-| 足端 | 平底足垫 0.075×0.055×0.030 m（μ=1.5） |
-| 激光雷达 | 360° ±π，8 m 量程，10 Hz |
-| 深度相机 | 前向 8 m，640×480 @15 Hz，HFOV 69° |
-| IMU | 100 Hz，装于机身 |
+| Trot 步态速度 | 0.35 m/s（`/odom` 真值） |
+| 遥测频率 | 1 Hz，单帧约 0.2 KB |
+| 摄像头兜底帧 | 640×360，q90，约 17.7 KB/帧，1 fps |
+| 语音压缩 | 3.6s：112 KB PCM → 5 KB Opus → 7 KB base64 |
+| 云端中转 RTT | 851 ~ 1590 ms（均值 1192 ms，抖动 ±304 ms） |
+| MQTT 断线恢复 | 10 ~ 16 s（`mosquitto_reconnect_delay_set(2, 10)`） |
+| 弱网矩阵测试 | 27/28 通过（R1~R5 档位：延迟/抖动/丢包/乱序/断网） |
 
-## 步态控制器（gait_controller.cpp）
+---
 
-核心设计（详见源码注释）：
-
-1. **足端逆解**：给定足端目标位置 + 膝角，二连杆解析逆解反解髋角，自动补偿膝关节折叠带来的前后偏移（这是"后退走不动"的根因）
-2. **速度闭环制动**：`v_eff = v_cmd + kv·(v_cmd − v_meas)`，指令归零后若机身还在滑，步态主动反向迈步抵消惯性
-3. **软启动**：spawn 后前 2.5 s 关节指令从实际角度斜坡过渡到站立姿态，避免瘫倒瞬间蹬飞机身
-4. **原地转向模式**：纯转向时放慢步频、加大横向扫幅换取抓地力
-5. **指令看门狗**：cmd_vel 流中断 0.5 s 自动停车
-
-## CHAMP 步态控制器
-
-除了自研 `gait_controller`，本项目还把上游 **CHAMP**（通用四足步态控制器）
-vendored 进 `src/champ/`，用 `src/quadruped_champ_config/` 做适配，可以用一条
-命令切换：
-
-```bash
-ros2 launch quadruped_sim quadruped_gz.launch.py gait:=champ   # 用 CHAMP
-ros2 launch quadruped_sim quadruped_gz.launch.py gait:=trot    # 用自研步态（默认）
-ros2 launch quadruped_sim quadruped_gz.launch.py gait:=none    # 不起步态控制器
-```
-
-数据链路：
-
-```
-/cmd_vel -> quadruped_controller_node -> /champ/joint_cmd (JointState, 12 关节)
-         -> champ_joint_relay         -> /quadruped/<leg>_<joint>/cmd_pos (Float64)
-         -> gz JointPositionController -> 关节
-```
-
-### 为跑通 CHAMP 做的三处关键修复
-
-| 现象 | 根因 | 修法 |
-|---|---|---|
-| 12 路关节指令全是 0 | `nominal_height` 0.30 正好等于腿完全伸直长度，命中逆解可达性边界 `target_to_foot >= l1+l2`，`inverse()` 提前 return，大腿/膝角度未初始化 | 改成 0.25，腿保持微屈 |
-| 后腿膝关节几乎不动（实际摆幅 0.034 rad） | `knee_orientation: "><"` 给后腿算出 +1.26 rad，超出 URDF 限位 `upper=0.20` 被卡死 | 改成 `">>"`，四腿统一 0.63/−1.26 |
-| 原地不动（0.000 m/s）但能转向 | 后腿髋关节绕 Z 转了 π 做镜像，而 champ 的 `urdf::getPose` 只累加位移、忽略 rpy，逆解对四条腿用同一套 x 方向约定 → 后腿足端朝反方向迈，前进分量与后腿抵消 | 给 champ 核心加 `x_mirrored` 逐腿标志，逆解入口把 x 取反；配置里 `x_mirrored_hind: true` |
-
-前两条是配置问题，第三条是 vendored 上游代码的适配补丁，改动集中在
-`quadruped_components.h`（GaitConfig 加字段）、`quadruped_leg.h`（加标志）、
-`quadruped_base.h`（下发）、`kinematics.h`（逆解里做 x 映射）、
-`quadruped_controller.cpp`（读参数）。
-
-### 关键参数（src/quadruped_champ_config/config/champ.yaml）
-
-| 参数 | 值 | 说明 |
-|---|---|---|
-| `nominal_height` | 0.25 | 站立时机身到足端距离，必须小于腿长 0.30 |
-| `knee_orientation` | `">>"` | 四腿膝关节同号（后腿靠 URDF 镜像获得犬式姿态） |
-| `x_mirrored_hind` | true | 后腿是否为镜像安装（配合 URDF 的 rpy=0 0 pi） |
-| `stance_duration` | 0.25 | 支撑相时长，步态周期 = 摆腿 0.25 + 支撑 0.25 = 0.5 s (2 Hz) |
-| `swing_height` | 0.05 | 摆腿抬脚高度 |
-| `max_linear_velocity_x` | 0.5 | 速度上限（实际能到约 0.15 m/s，见下） |
-
-### 实测性能（`/odom` 真值，每次复位到出生点）
-
-| 指令 | 实测 | 跟踪率 |
-|---|---|---|
-| vx=0.25 m/s | 0.152 m/s | 61% |
-| vx=0.15 + wz=0.4 | 0.125 m/s + 0.335 rad/s | 84% / 84% |
-| wz=0.5 原地 | 0.484 rad/s | 97% |
-| 连续 10 s 前进 | 2.68 m，roll/pitch 全程 ±2° 内 | 未翻倒 |
-
-速度在 0.15 m/s 附近饱和，瓶颈是关节跟踪率（指令摆幅 0.61 rad，实际
-0.37 rad，约 60%）。已把关节位置控制器增益从 p=50/60 提到 p=120/150，
-速度提升 53%；再往上调（p=300/350）反而变慢，已回退。
-
-## 弱网与中转部署
-
-现场拓扑为 `本地看板 ──公网──> 中转服务器 <──公网── 端侧机器狗`，两端各自独立弱化。
-启动时把 broker 指向中转服务器即可（端侧）：
-
-```bash
-ros2 launch quadruped_sim quadruped_gz.launch.py \
-    gui:=false rviz:=false nav:=true gait:=champ \
-    broker_host:=<服务器IP> broker_port:=1883
-```
-
-中转服务器只需一个 mosquitto（TCP 给端侧、WebSocket 给看板）：
-
-```conf
-listener 1883 0.0.0.0
-protocol mqtt
-allow_anonymous true
-
-listener 8083 0.0.0.0
-protocol websockets
-allow_anonymous true
-```
-
-### 重连策略
-
-三个 MQTT 节点统一用 libmosquitto 官方 API：
-
-```cpp
-mosquitto_reconnect_delay_set(mosq_, 2, 10, true);  // 退避 2s 起、封顶 10s
-```
-
-> 不要手写重连看门狗。实测三个坑：`mosquitto_socket()` 在 `loop_start` 模式下跨线程
-> 调用会返回 -1（误判断线，每 5s 掐断正常连接）；`disconnect()` 与 `reconnect_async()`
-> 成对连发会让服务器报 `Bad client ... sending multiple CONNECT messages` 并踢连接；
-> 只调 `reconnect_async()` 又会与内核 SYN 退避（1/2/4/…/32s）纠缠，恢复可达 41s。
-> 交给库的退避参数后：静置 0 抖动，断网 60s 后 16s 恢复。
-
-### 弱网实测（端侧→腾讯云中转，RTT 851~1590ms）
-
-| 档位 | 条件 | 遥测 | 下行派单 | 恢复 |
-|---|---|---|---|---|
-| R0 基线 | 真实公网不整形 | 5/5 帧 | 5s | — |
-| R1 4G 良好 | delay 100ms±40, loss 1% | 5/5 帧 | 4s | 3 帧 |
-| R2 4G 拥塞 | delay 300ms±150, loss 5%, dup 2% | 5/5 帧 | 4s | 3 帧 |
-| R3 边缘弱信号 | delay 800ms±400, loss 15%, dup 5% | 5/5 帧 | 4s | 3 帧 |
-| R4 卫星/极差 | delay 1500ms±800, loss 30%, reorder 20% | 5/5 帧 | 4s | 3 帧 |
-| R5 断网 | loss 100%，持续 60s | 中断 | 恢复后 1s | 16s |
-
-结论：状态上报（QoS1 + retained）在 30% 丢包下仍完整；下行指令同样可靠；
-末端风险集中在**长断网后的重连退避**，已由 `reconnect_delay_set` 封顶到 10s。
-
-测试脚本与档位参数见 [`tools/weaknet/`](tools/weaknet/README.md)。
-
-## 文档索引
-
-根目录只保留本 README，其余文档随所属模块放在各自目录下：
-
-- 看板侧（`quadruped-ops/`）
-  - [MQTT-INTERFACE.md](quadruped-ops/MQTT-INTERFACE.md)：厂区监控运维看板的 MQTT 接口规范（v2.1）
-  - [VOICE-INTERFACE.md](quadruped-ops/VOICE-INTERFACE.md)：语音指令链路（ASR → LLM → 任务下发）
-- 机器人侧（`src/quadruped_sim/docs/`）
-  - [NAV2-GUIDE.md](src/quadruped_sim/docs/NAV2-GUIDE.md)：Nav2 导航使用指南（CLI 发目标、实测性能、已知问题）
-
-## 巡逻实测数据
+## 巡逻与建图实测
 
 以 `/tmp/sim_v6.log`（一次连续运行 81.8 分钟）统计：
 
@@ -328,18 +243,30 @@ Nav2 下发速度但步态推不动（关节速度打满限幅），最终以 `c
 > 早期记录曾写"40 分钟 6 轮 30/30 全到达、零失败"，该结论来自单次未含异常
 > 状态的观测，与长时间运行统计不符，此处按实测数据更正。
 
+## 文档索引
+
+| 文档 | 内容 |
+|---|---|
+| [deploy/README-DEPLOY.md](deploy/README-DEPLOY.md) | 两种部署模式的完整操作手册 |
+| [dashboard/VIDEO-LINK.md](dashboard/VIDEO-LINK.md) | 视频链路拓扑、配置要点、实测与排障 |
+| [dashboard/MQTT-INTERFACE.md](dashboard/MQTT-INTERFACE.md) | MQTT 主题与报文契约 |
+| [dashboard/VOICE-INTERFACE.md](dashboard/VOICE-INTERFACE.md) | 语音链路契约（上行/下行/确认策略） |
+| [tools/weaknet/README.md](tools/weaknet/README.md) | 弱网注入与矩阵测试方法 |
+| [deploy/mediamtx-install.md](deploy/mediamtx-install.md) | MediaMTX 安装与配置 |
+
+---
+
 ## 已知限制
 
-- 原地转向力矩偏弱（±15-45°/4s），四足横向扫动的偏航力矩天然有限，后续计划专门的原地转向步态
-- 直腿支撑相是近奇异位形，行走时偶有打滑，机身高度会轻微波动
-- CHAMP 步态速度上限约 0.15 m/s：关节位置控制器跟踪率只有约 60%，
-  指令步幅越大打滑越严重；要再快需要调物理参数或换力矩控制
-- 为保证与 champ 运动学模型一致，后腿镜像必须在配置里显式声明
-  （`x_mirrored_hind`）；champ 上游对 rpy 镜像不感知，换模型时容易踩坑
-- champ 的里程计/状态估计节点未启用，`/odom` 由 gz 的 WORLD 真值源提供
-- 步态卡滞后 Nav2 报 `code=6`/105，内置脱困（后退+转身）成功率约一半，
-  连续卡死仍需要人工介入或重启该航点
+- 仿真环境，未在真实四足硬件上验证
+- 看板任务 ID 由前端 `max(existing)+1` 分配，多操作员并发时有碰撞风险
+- MediaMTX 与 MQTT 目前允许匿名访问，公网部署需补认证
+- 语音上行依赖端侧 ffmpeg + libopus
+- 模式 1 默认无 MediaMTX，视频降级为 MQTT-JPEG 快照
+
+---
 
 ## License
 
-Apache-2.0
+本项目代码用于学习与工程实践。`src/champ/` 为 vendored 上游项目（BSD-3-Clause），
+`dashboard/` 为配套运维看板。

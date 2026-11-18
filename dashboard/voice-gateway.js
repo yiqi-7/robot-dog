@@ -25,6 +25,7 @@
 import mqtt from "mqtt";
 import fs from "node:fs";
 import path from "node:path";
+import { decodeOpusToPcm } from "./voice-codec.js";
 
 const MQTT_URL = process.env.MQTT_URL || "mqtt://localhost:1883";
 const P = process.env.TOPIC_PREFIX || "qbot/v1";
@@ -537,13 +538,22 @@ client.on("message", (topic, buf) => {
     }
     if (seg[2] === "robots" && seg[4] === "audio") {
       if (!msg.data) return;
-      if (msg.format !== "pcm_s16le") {
-        console.log(`[asr] 不支持的音频格式 ${msg.format}（当前仅支持 pcm_s16le）`);
+      if (msg.format !== "pcm_s16le" && msg.format !== "opus") {
+        console.log(`[asr] 不支持的音频格式 ${msg.format}（支持 opus / pcm_s16le）`);
         return;
       }
-      const pcm = Buffer.from(msg.data, "base64");
+      let pcm = Buffer.from(msg.data, "base64");
       const sampleRate = msg.sampleRate || 16000;
       const channels = msg.channels || 1;
+      if (msg.format === "opus") {
+        const coded = pcm.length;
+        const decoded = decodeOpusToPcm(pcm, sampleRate, channels);
+        if (!decoded) return;
+        pcm = decoded;
+        console.log(
+          `[asr] Opus 解码：${(coded / 1024).toFixed(1)}KB -> ${(pcm.length / 1024).toFixed(1)}KB PCM`,
+        );
+      }
       const st = audioStats(pcm, sampleRate, channels);
       const cmdId = `vc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
       const audioFile = saveClip(cmdId, pcm, sampleRate, channels);

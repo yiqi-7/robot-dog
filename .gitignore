@@ -34,3 +34,20 @@ quadruped-ops/mediamtx/mediamtx.yml
 
 # 运行时模型目录（根目录 piper 模型 61MB，只留文档说明获取方式）
 models/
+
+# Gazebo / RViz 导出的帧与录屏
+frames_*.gv
+frames_*.pdf
+*.ogv
+
+# 运行时日志与临时产物
+*.log
+real_audio.*
+video-verify/
+chrome-profile*/
+
+# 本地运行副本的备份目录
+quadruped-ops/dist.bak.*/
+
+# 看板运行副本（含 node_modules 与 290MB 模型），源码以 dashboard/ 为准
+/quadruped-ops/

@@ -54,7 +54,7 @@ QoS 1，非 retained。建议唤醒后录 2~8 秒。
 
 | 字段 | 约定 |
 | --- | --- |
-| `format` | 当前仅支持 `pcm_s16le`（16bit 小端单声道 PCM 裸流，无 WAV 头） |
+| `format` | `opus`（默认，Ogg/Opus 封装，压缩比 ~15:1）或 `pcm_s16le`（16bit 小端单声道裸流，无 WAV 头，兼容/回退） |
 | `sampleRate` | 任意采样率均可，推荐 16000 |
 | `data` | 3~5 秒语音约 100~160KB（16kHz），MQTT 局域网可直传 |
 

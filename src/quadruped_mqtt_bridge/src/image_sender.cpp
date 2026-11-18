@@ -53,6 +53,10 @@ public:
     rtsp_port_  = declare_parameter("rtsp_port", 8554);
     width_  = declare_parameter("width", 640);
     height_ = declare_parameter("height", 480);
+    // MQTT 快照独立分辨率：与 RTSP 流解耦，兜底帧不需要和视频流同分辨率
+    snapshot_width_  = declare_parameter("snapshot_width", 640);
+    snapshot_height_ = declare_parameter("snapshot_height", 360);
+    max_snapshot_bytes_ = declare_parameter("max_snapshot_bytes", 200 * 1024);
     fps_    = declare_parameter("fps", 15.0);
 
     cam_topic_  = declare_parameter("cam_topic", "rgb_camera");
@@ -207,10 +211,24 @@ private:
     if ((now() - last_jpeg_).seconds() < 1.0 / jpeg_fps_) return;
     last_jpeg_ = now();
 
+    // 缩放到快照分辨率再编码：兜底帧追求"能看清"，不需要视频流的分辨率
+    cv::Mat snap = bgr;
+    if (snapshot_width_ > 0 && snapshot_height_ > 0 &&
+        (bgr.cols != snapshot_width_ || bgr.rows != snapshot_height_)) {
+      cv::resize(bgr, snap, cv::Size(snapshot_width_, snapshot_height_),
+                 0, 0, cv::INTER_AREA);
+    }
     std::vector<uchar> jpg;
     std::vector<int> p{cv::IMWRITE_JPEG_QUALITY,
                        static_cast<int>(jpeg_quality_)};
-    cv::imencode(".jpg", bgr, jpg, p);
+    cv::imencode(".jpg", snap, jpg, p);
+    // 兜底帧也做体积保护：超过上限就降质量重编一次，避免弱网下砸出大包
+    if (jpg.size() > static_cast<size_t>(max_snapshot_bytes_) && jpeg_quality_ > 40) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 10000,
+        "快照 %zu 字节超过上限 %d，降质量重编", jpg.size(), max_snapshot_bytes_);
+      std::vector<int> p2{cv::IMWRITE_JPEG_QUALITY, 40};
+      cv::imencode(".jpg", snap, jpg, p2);
+    }
     int rc = mosquitto_publish(mosq_, nullptr, state_topic_.c_str(),
       static_cast<int>(jpg.size()), jpg.data(), 0, false);
     if (rc != MOSQ_ERR_SUCCESS) {
@@ -220,6 +238,8 @@ private:
   }
 
   // ---------------- 成员 ----------------
+  int snapshot_width_ = 640, snapshot_height_ = 360;
+  int max_snapshot_bytes_ = 200 * 1024;   // 课程约定：单帧 <= 200KB
   std::string robot_id_, state_topic_, broker_, rtsp_server_;
   std::string cam_topic_, topic_prefix_;
   long jpeg_quality_;

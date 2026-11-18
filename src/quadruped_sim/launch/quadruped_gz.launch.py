@@ -315,8 +315,15 @@ def launch_setup(context, *args, **kwargs):
             {
                 "use_sim_time": use_sim_time,
                 "robot_id": "robot-01",
+                # 兜底帧：课程 MQTT-INTERFACE 3.2 建议 640x360、单帧 <=200KB、0.5~2fps
+                # q90@640x480 实测约 20KB，已远低于上限；降到 640x360 可再省约一半流量
                 "jpeg_quality": 90,
                 "jpeg_fps": 1.0,
+                "snapshot_width": 640,
+                "snapshot_height": 360,
+                # broker 必须跟随 launch 参数，否则默认 127.0.0.1，图像帧上不了云
+                "broker_host": broker_host,
+                "broker_port": broker_port,
                 "rtsp_server": "43.172.91.67",
                 "rtsp_port": 8554,
             }

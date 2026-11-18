@@ -1,4 +1,10 @@
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <iterator>
+#include <sstream>
+#include <unistd.h>
 // ===========================================================================
 // voice_link_node.cpp —— 语音链路节点：§3.1 音频上行（base64）+ §3.2 TTS 播报
 //
@@ -29,6 +35,9 @@ VoiceLinkNode::VoiceLinkNode() : rclcpp::Node("voice_link")
   audio_ros_topic_   = declare_parameter("audio_topic", "voice/audio_pcm");
   audio_sample_rate_ = declare_parameter("audio_sample_rate", 16000);
   audio_channels_    = declare_parameter("audio_channels", 1);
+  // 上行编码：opus（默认，压缩 ~15:1）| pcm_s16le（兼容/回退）
+  audio_codec_       = declare_parameter("audio_codec", "opus");
+  opus_bitrate_      = declare_parameter("opus_bitrate", "16k");
   // TTS 本地播报：piper（模型 course 提供 zh_CN-huayan-medium）
   piper_bin_   = declare_parameter("piper_bin", "/home/wby/venvs/piper/bin/piper");
   piper_model_ = declare_parameter("piper_model",
@@ -203,6 +212,39 @@ void VoiceLinkNode::onMessageCb(struct mosquitto * /*mosq*/, void *obj,
 // 语音上行：PCM 片段 → {P}/robots/{id}/audio
 // 报文格式见 VOICE-INTERFACE.md §3.1（QoS1，非 retained）
 // =========================================================================
+// 用 ffmpeg 把 PCM 编成 Ogg/Opus（临时文件往返：语音偶发，简单可靠）
+bool VoiceLinkNode::encodeOpus(const std::vector<uint8_t> &pcm, int rate, int ch,
+                               std::vector<uint8_t> &out)
+{
+  char in_path[] = "/tmp/qbot_voice_in_XXXXXX";
+  const int fd = mkstemp(in_path);
+  if (fd < 0) return false;
+  const ssize_t wr = write(fd, pcm.data(), pcm.size());
+  close(fd);
+  if (wr != static_cast<ssize_t>(pcm.size())) { std::remove(in_path); return false; }
+
+  const std::string ogg_path = std::string(in_path) + ".ogg";
+  std::ostringstream cmd;
+  cmd << "ffmpeg -hide_banner -loglevel error -y -f s16le -ar " << rate
+      << " -ac " << ch << " -i " << in_path
+      << " -c:a libopus -b:a " << opus_bitrate_ << " -f ogg " << ogg_path
+      << " >/dev/null 2>&1";
+  const int rc = std::system(cmd.str().c_str());
+
+  bool ok = false;
+  if (rc == 0) {
+    std::ifstream f(ogg_path, std::ios::binary);
+    if (f) {
+      out.assign(std::istreambuf_iterator<char>(f),
+                 std::istreambuf_iterator<char>());
+      ok = out.size() > 32;   // Ogg 头本身就有几十字节
+    }
+  }
+  std::remove(in_path);
+  std::remove(ogg_path.c_str());
+  return ok;
+}
+
 void VoiceLinkNode::onAudioPcm(const std::vector<uint8_t> &pcm)
 {
   int rate = 16000, ch = 1;
@@ -219,19 +261,35 @@ void VoiceLinkNode::onAudioPcm(const std::vector<uint8_t> &pcm)
   if (bytes == 0) return;
 
   const double dur = static_cast<double>(bytes) / (2.0 * ch * rate);
+
+  // 优先 Opus：弱网上行 125KB -> 8KB，语音指令才不会等到超时
+  std::vector<uint8_t> coded;
+  std::string fmt = "pcm_s16le";
+  if (audio_codec_ == "opus") {
+    if (encodeOpus(pcm, rate, ch, coded)) {
+      fmt = "opus";
+    } else {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 10000,
+        "Opus 编码失败，回退 pcm_s16le（检查端侧是否装了 ffmpeg + libopus）");
+    }
+  }
+  const uint8_t *raw = (fmt == "opus") ? coded.data() : pcm.data();
+  const size_t raw_bytes = (fmt == "opus") ? coded.size() : bytes;
+
   json j = {
     {"robotId",    robot_id_},
     {"ts",         qmb::wallClockMs()},
-    {"format",     "pcm_s16le"},
+    {"format",     fmt},
     {"sampleRate", rate},
     {"channels",   ch},
-    {"data",       qmb::base64Encode(pcm.data(), bytes)},
+    {"data",       qmb::base64Encode(raw, raw_bytes)},
   };
   const std::string payload = j.dump();
   const int rc = qmb::publishText(mosq_, audio_topic_, payload, 1, /*retain=*/false);
   if (rc == MOSQ_ERR_SUCCESS) {
-    RCLCPP_INFO(get_logger(), "语音已上行：%.2f s（%zu KB PCM → %zu KB base64）",
-      dur, bytes / 1024, payload.size() / 1024);
+    RCLCPP_INFO(get_logger(),
+      "语音已上行：%.2f s（%zu KB PCM -> %s %zu KB -> base64 %zu KB）",
+      dur, bytes / 1024, fmt.c_str(), raw_bytes / 1024, payload.size() / 1024);
   } else {
     RCLCPP_WARN(get_logger(), "语音上行失败：%s", mosquitto_strerror(rc));
   }

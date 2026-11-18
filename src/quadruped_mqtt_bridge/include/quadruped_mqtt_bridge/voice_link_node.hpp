@@ -57,6 +57,9 @@ public:
 
   // ---------------- 语音：§3.1 音频上行 / §3.2 piper 播报队列 ----------------
   void onAudioPcm(const std::vector<uint8_t> &pcm);
+  // PCM -> Ogg/Opus（ffmpeg 临时文件往返）；失败返回 false 由调用方回退
+  bool encodeOpus(const std::vector<uint8_t> &pcm, int rate, int ch,
+                  std::vector<uint8_t> &out);
   void onTts(const std::string &text);
   void enqueueTts(const std::string & text);
   void ttsWorker();
@@ -77,6 +80,7 @@ public:
   bool voice_enabled_ = true;
   std::string audio_ros_topic_;
   int audio_sample_rate_ = 16000, audio_channels_ = 1;
+  std::string audio_codec_ = "opus", opus_bitrate_ = "16k";
   std::string piper_bin_, piper_model_;
 
   rclcpp::Subscription<std_msgs::msg::UInt8MultiArray>::SharedPtr sub_audio_;
