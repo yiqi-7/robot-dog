@@ -51,3 +51,7 @@ quadruped-ops/dist.bak.*/
 
 # 看板运行副本（含 node_modules 与 290MB 模型），源码以 dashboard/ 为准
 /quadruped-ops/
+
+# 防误提交：shell 引号事故产物（这类文件名不可能是真实源文件）
+=?[0-9]*
+[\[\]{}|^$()]*
