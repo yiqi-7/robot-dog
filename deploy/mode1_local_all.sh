@@ -28,7 +28,25 @@ BROKER_HOST="127.0.0.1"                               # 本机 broker
 MQTT_PORT=1883
 WS_PORT=8083
 DASH_PORT=8080
-NODE_BIN="$(command -v node || true)"
+# 定位 node：优先系统 PATH，其次常见独立安装目录（云端装在 /opt/qbot/node）
+resolve_node() {
+  local c
+  for c in "$(command -v node 2>/dev/null || true)" \
+           /opt/qbot/node/bin/node \
+           /usr/local/bin/node \
+           /usr/bin/node; do
+    if [[ -n "$c" && -x "$c" ]]; then
+      printf '%s' "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+NODE_BIN="${NODE_BIN:-$(resolve_node || true)}"
+# 把 node 所在目录加入 PATH，npm/ffmpeg 等工具链才能正常调用
+if [[ -n "$NODE_BIN" ]]; then
+  export PATH="$(dirname "$NODE_BIN"):${PATH}"
+fi
 
 usage() {
   cat <<'EOF'

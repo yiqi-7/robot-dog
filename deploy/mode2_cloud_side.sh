@@ -22,7 +22,25 @@ WHEP_PORT="${WHEP_PORT:-8889}"
 PUBLIC_IP="${PUBLIC_IP:-43.172.91.67}"        # MediaMTX 对外宣告的候选地址
 LOG_DASH="/tmp/qbot_cloud_dash.log"
 LOG_GW="/tmp/qbot_cloud_gw.log"
-NODE_BIN="$(command -v node || true)"
+# 定位 node：优先系统 PATH，其次常见独立安装目录（云端装在 /opt/qbot/node）
+resolve_node() {
+  local c
+  for c in "$(command -v node 2>/dev/null || true)" \
+           /opt/qbot/node/bin/node \
+           /usr/local/bin/node \
+           /usr/bin/node; do
+    if [[ -n "$c" && -x "$c" ]]; then
+      printf '%s' "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+NODE_BIN="${NODE_BIN:-$(resolve_node || true)}"
+# 把 node 所在目录加入 PATH，npm/ffmpeg 等工具链才能正常调用
+if [[ -n "$NODE_BIN" ]]; then
+  export PATH="$(dirname "$NODE_BIN"):${PATH}"
+fi
 
 usage() {
   cat <<'EOF'
@@ -80,19 +98,37 @@ health_check() {
     local port="${p%%:*}" name="${p##*:}"
     if ss -lnt 2>/dev/null | grep -q ":${port} "; then info "${name} :${port} 监听中"; else warn "${name} :${port} 未监听"; bad=1; fi
   done
-  # RTSP 是否有端侧推流
-  if ss -tn 2>/dev/null | grep -q ":${RTSP_PORT} .*ESTAB"; then
-    info "RTSP 有端侧推流连接"
+  # RTSP 是否有推流/拉流连接
+  #
+  # 注意 ss 的输出把状态放在最左列（`ESTAB 0 0 [::ffff:10.4.0.7]:8554 ...`），
+  # 所以正则必须是 `ESTAB.*:端口`；写成 `:端口 .*ESTAB` 永远匹配不到。
+  # MediaMTX 的 API 在本项目里是关掉的，无法精确区分"发布者"与"观看者"，
+  # 因此这里报告的是"存在活跃的 RTSP 连接"，两端计数分开统计更直观。
+  local rtsp_n
+  rtsp_n=$(ss -tn 2>/dev/null | grep -cE "ESTAB.*:${RTSP_PORT}\b" || true)
+  if [[ "${rtsp_n:-0}" -ge 1 ]]; then
+    info "RTSP 有 ${rtsp_n} 条活跃连接（推流或拉流）"
   else
-    warn "RTSP 无推流连接（机器人侧未启动？）"
+    warn "RTSP 无活跃连接（机器人侧未启动推流？）"
+    bad=1
   fi
-  # MQTT 是否有机器人遥测
+  # MQTT 是否有机器人**实时**遥测
+  #
+  # 注意：机器人掉线时 broker 代发的遗嘱是 retained 的，`-C 1` 会立刻拿到这条
+  # 陈旧消息，从而误判"机器人在线"（实测内容为 battery=null、status=offline）。
+  # 因此要求连续收到 2 条且最后一条不是 offline：在线时 1Hz 推送，8 秒内必有 2 条。
   if command -v mosquitto_sub >/dev/null 2>&1; then
-    if timeout 12 mosquitto_sub -h 127.0.0.1 -p "$MQTT_PORT" \
-         -t "qbot/v1/robots/robot-01/state" -C 1 -W 10 >/dev/null 2>&1; then
-      info "收到机器人遥测（robot-01/state）"
+    local_tele=$(timeout 14 mosquitto_sub -h 127.0.0.1 -p "$MQTT_PORT" \
+         -t "qbot/v1/robots/robot-01/state" -C 2 -W 12 2>/dev/null || true)
+    local_cnt=$(printf '%s' "$local_tele" | grep -c . || true)
+    if [[ "${local_cnt:-0}" -ge 2 ]] && ! printf '%s' "$local_tele" | tail -1 | grep -q '"offline"'; then
+      info "收到机器人实时遥测（robot-01/state，连续 2 帧）"
+    elif [[ "${local_cnt:-0}" -ge 1 ]]; then
+      warn "只收到 1 条遥测（疑似 retained 的遗嘱/陈旧快照），机器人可能未在线"
+      bad=1
     else
-      warn "10 秒内未收到遥测（机器人侧未启动？）"
+      warn "12 秒内未收到遥测（机器人侧未启动？）"
+      bad=1
     fi
   fi
   return "$bad"
