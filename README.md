@@ -249,6 +249,8 @@ mosquitto_reconnect_delay_set(mosq_, 2, 10, true);  // 退避 2s 起、封顶 10
 结论：状态上报（QoS1 + retained）在 30% 丢包下仍完整；下行指令同样可靠；
 末端风险集中在**长断网后的重连退避**，已由 `reconnect_delay_set` 封顶到 10s。
 
+测试脚本与档位参数见 [`tools/weaknet/`](tools/weaknet/README.md)。
+
 ## 文档索引
 
 根目录只保留本 README，其余文档随所属模块放在各自目录下：
