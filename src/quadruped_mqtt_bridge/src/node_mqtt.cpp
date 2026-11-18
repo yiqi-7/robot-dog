@@ -1,3 +1,4 @@
+#include <chrono>
 // ===========================================================================
 // node_mqtt.cpp —— mqtt_bridge 的 MQTT 传输层：连接 / 回调 / 遗嘱消息 / site map
 //
@@ -37,12 +38,18 @@ void MqttBridgeNode::initMqtt()
   mosquitto_connect_callback_set(mosq_, &MqttBridgeNode::onConnectCb);
   mosquitto_disconnect_callback_set(mosq_, &MqttBridgeNode::onDisconnectCb);
 
+  // 重连退避：2s 起、指数增长、封顶 10s（官方 API，不干扰库状态机）
+  mosquitto_reconnect_delay_set(mosq_, 2, 10, true);
   int rc = mosquitto_connect_async(mosq_, broker_host_.c_str(), broker_port_, keepalive_);
   if (rc != MOSQ_ERR_SUCCESS) {
     RCLCPP_ERROR(get_logger(), "connect_async 失败: %s", mosquitto_strerror(rc));
     return;
   }
   mosquitto_loop_start(mosq_);   // 独立网络线程，内部自动重连
+  // 重连策略交给 libmosquitto：mosquitto_reconnect_delay_set()
+  // （退避 2s 起、封顶 10s）。手写看门狗会干扰库的连接状态机：
+  // 实测 disconnect+reconnect 连发会让服务器判协议错误踢连接，
+  // 形成 3s 抖动循环；只 reconnect 又会受内核 SYN 退避影响。
 }
 
 void MqttBridgeNode::onConnectCb(struct mosquitto * /*mosq*/, void *obj, int rc)

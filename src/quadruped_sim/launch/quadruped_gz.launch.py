@@ -246,12 +246,17 @@ def launch_setup(context, *args, **kwargs):
     #   task_runner  接收看板派单(estop/resume/assign/cancel) + Nav2 + 任务回写
     #   voice_link   语音上行(§3.1) + TTS 播报(§3.2)
     # 三者互不依赖（任一重启不影响其它两个），所以放在同一 TimerAction 组里并行起。
+    # 中转服务器地址：默认本机回环，弱网/远程部署时用 broker_host:=<服务器IP> 覆盖
+    broker_host = LaunchConfiguration("broker_host").perform(context)
+    broker_port = int(LaunchConfiguration("broker_port").perform(context))
+
     def mqtt_params():
         # 每个节点单独一份参数列表：launch_ros 会就地规范化 dict，共享同一实例不安全
         return [{
             "use_sim_time": use_sim_time,
-            "broker_host": "127.0.0.1",
-            "broker_port": 1883,
+            # broker 地址由 launch 参数决定：默认本机，现场可指向中转服务器
+            "broker_host": broker_host,
+            "broker_port": broker_port,
         }]
 
     mqtt_bridge = Node(
@@ -467,6 +472,12 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument("use_sim_time", default_value="true"),
+            DeclareLaunchArgument(
+                "broker_host", default_value="127.0.0.1",
+                description="MQTT broker 主机（中转服务器 IP）"),
+            DeclareLaunchArgument(
+                "broker_port", default_value="1883",
+                description="MQTT broker 端口（服务器 TCP 端口）"),
             DeclareLaunchArgument("patrol", default_value="true"),
             DeclareLaunchArgument(
                 "gui", default_value="true", description="是否显示 Gazebo 界面"

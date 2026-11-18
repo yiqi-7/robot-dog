@@ -23,47 +23,68 @@ public:
   DeadmanGuard() : Node("deadman_guard")
   {
     hb_timeout_ = declare_parameter("hb_timeout", 3.0);
+    // 输入超时：Nav2/急停停发速度后必须归零。缺这一条会有两个后果
+    // （隔离实测）：① 本节点以 10Hz 无限重发上一帧，gait_controller 的
+    // cmd_timeout(0.5s) 永不触发；② task_runner 急停直发的零速被覆盖。
+    in_timeout_ = declare_parameter("in_timeout", 0.5);
     sub_in_ = create_subscription<geometry_msgs::msg::Twist>(
       "cmd_vel_in", 10,
-      [this](geometry_msgs::msg::Twist::SharedPtr msg) { last_in_ = *msg; in_seen_ = true; });
+      [this](geometry_msgs::msg::Twist::SharedPtr msg) {
+        last_in_ = *msg;
+        last_in_time_ = now();
+        in_seen_ = true;
+      });
     sub_hb_ = create_subscription<std_msgs::msg::String>(
       "safety/heartbeat", 10,
       [this](std_msgs::msg::String::SharedPtr) { last_hb_ = now(); hb_seen_ = true; });
     pub_out_ = create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 10);
     timer_ = create_wall_timer(std::chrono::milliseconds(100), [this]() { tick(); });
     RCLCPP_INFO(get_logger(),
-      "看门狗已上线：cmd_vel_in → cmd_vel，心跳超时 %.1fs 切断（底盘层最后停机手段）",
-      hb_timeout_);
+      "看门狗已上线：cmd_vel_in → cmd_vel，心跳超时 %.1fs 切断、输入超时 %.1fs 归零"
+      "（底盘层最后停机手段）", hb_timeout_, in_timeout_);
   }
 
 private:
   void tick()
   {
-    // 放行条件：从未见过心跳（无执行端场景）或心跳新鲜
+    // 放行需要同时满足：心跳新鲜（或从未见过执行端）+ 速度输入新鲜。
+    // 只判心跳会让"导航结束/急停后无人再发速度"的场景永远重发旧值。
     const bool alive = !hb_seen_ || (now() - last_hb_).seconds() <= hb_timeout_;
-    if (alive) {
+    const bool fresh = in_seen_ && (now() - last_in_time_).seconds() <= in_timeout_;
+
+    if (alive && fresh) {
       if (tripped_) {
         RCLCPP_WARN(get_logger(), "执行端心跳恢复，看门狗放行速度链路");
         tripped_ = false;
       }
-      if (in_seen_) {
-        pub_out_->publish(last_in_);
+      if (stalled_) {
+        RCLCPP_INFO(get_logger(), "速度输入恢复，看门狗继续中继");
+        stalled_ = false;
       }
+      pub_out_->publish(last_in_);
       return;
     }
-    if (!tripped_) {
+
+    if (!alive && !tripped_) {
       RCLCPP_ERROR(get_logger(),
         "执行端(task_runner)心跳丢失 >%.1fs，看门狗切断速度链路并持续发零速", hb_timeout_);
       tripped_ = true;
+    }
+    if (alive && in_seen_ && !fresh && !stalled_) {
+      // 这条是常态：导航到点/被取消/急停后 Nav2 停发速度，必须由看门狗归零，
+      // 否则上一帧速度会被无限重发（"停不下来"）。
+      RCLCPP_INFO(get_logger(), "速度输入中断 >%.1fs（导航结束或急停），看门狗发零速", in_timeout_);
+      stalled_ = true;
     }
     geometry_msgs::msg::Twist zero;
     pub_out_->publish(zero);
   }
 
-  double hb_timeout_;
-  bool in_seen_ = false, hb_seen_ = false, tripped_ = false;
+  double hb_timeout_, in_timeout_;
+  bool in_seen_ = false, hb_seen_ = false, tripped_ = false, stalled_ = false;
   geometry_msgs::msg::Twist last_in_;
   rclcpp::Time last_hb_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time last_in_time_{0, 0, RCL_ROS_TIME};
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr sub_in_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_hb_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr pub_out_;

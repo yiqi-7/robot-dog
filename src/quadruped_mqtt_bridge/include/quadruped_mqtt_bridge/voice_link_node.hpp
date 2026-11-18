@@ -67,7 +67,9 @@ public:
   std::string broker_host_, robot_id_, robot_name_;
   std::string topic_prefix_, username_, password_;
   std::string audio_topic_, tts_topic_;
-  int broker_port_ = 1883, keepalive_ = 10;   // 10s：LWT 掉线判定窗口 ≈ 15s
+  int broker_port_ = 1883, keepalive_ = 30;   // 语音节点单独放宽：124.8KB 单帧在 512kbit
+                                             // 下传输 >10s，keepalive 10s 会被大帧顶掉，
+                                             // 导致「已连接→断开」重连风暴（弱网 W6 实测）
 
   struct mosquitto *mosq_ = nullptr;
 

@@ -101,6 +101,8 @@ ros2 launch quadruped_sim quadruped_gz.launch.py \
 | `nav` | true | 启动 slam_toolbox + Nav2 导航栈 |
 | `gait` | true | 启动 C++ 步态控制器 |
 | `teleop` | false | 键盘遥控（需要交互式终端，建议手动另开） |
+| `broker_host` | 127.0.0.1 | MQTT broker 主机；远程/中转部署填服务器 IP |
+| `broker_port` | 1883 | MQTT broker 端口 |
 
 ### 键盘遥控
 
@@ -195,6 +197,57 @@ ros2 launch quadruped_sim quadruped_gz.launch.py gait:=none    # 不起步态控
 速度在 0.15 m/s 附近饱和，瓶颈是关节跟踪率（指令摆幅 0.61 rad，实际
 0.37 rad，约 60%）。已把关节位置控制器增益从 p=50/60 提到 p=120/150，
 速度提升 53%；再往上调（p=300/350）反而变慢，已回退。
+
+## 弱网与中转部署
+
+现场拓扑为 `本地看板 ──公网──> 中转服务器 <──公网── 端侧机器狗`，两端各自独立弱化。
+启动时把 broker 指向中转服务器即可（端侧）：
+
+```bash
+ros2 launch quadruped_sim quadruped_gz.launch.py \
+    gui:=false rviz:=false nav:=true gait:=champ \
+    broker_host:=<服务器IP> broker_port:=1883
+```
+
+中转服务器只需一个 mosquitto（TCP 给端侧、WebSocket 给看板）：
+
+```conf
+listener 1883 0.0.0.0
+protocol mqtt
+allow_anonymous true
+
+listener 8083 0.0.0.0
+protocol websockets
+allow_anonymous true
+```
+
+### 重连策略
+
+三个 MQTT 节点统一用 libmosquitto 官方 API：
+
+```cpp
+mosquitto_reconnect_delay_set(mosq_, 2, 10, true);  // 退避 2s 起、封顶 10s
+```
+
+> 不要手写重连看门狗。实测三个坑：`mosquitto_socket()` 在 `loop_start` 模式下跨线程
+> 调用会返回 -1（误判断线，每 5s 掐断正常连接）；`disconnect()` 与 `reconnect_async()`
+> 成对连发会让服务器报 `Bad client ... sending multiple CONNECT messages` 并踢连接；
+> 只调 `reconnect_async()` 又会与内核 SYN 退避（1/2/4/…/32s）纠缠，恢复可达 41s。
+> 交给库的退避参数后：静置 0 抖动，断网 60s 后 16s 恢复。
+
+### 弱网实测（端侧→腾讯云中转，RTT 851~1590ms）
+
+| 档位 | 条件 | 遥测 | 下行派单 | 恢复 |
+|---|---|---|---|---|
+| R0 基线 | 真实公网不整形 | 5/5 帧 | 5s | — |
+| R1 4G 良好 | delay 100ms±40, loss 1% | 5/5 帧 | 4s | 3 帧 |
+| R2 4G 拥塞 | delay 300ms±150, loss 5%, dup 2% | 5/5 帧 | 4s | 3 帧 |
+| R3 边缘弱信号 | delay 800ms±400, loss 15%, dup 5% | 5/5 帧 | 4s | 3 帧 |
+| R4 卫星/极差 | delay 1500ms±800, loss 30%, reorder 20% | 5/5 帧 | 4s | 3 帧 |
+| R5 断网 | loss 100%，持续 60s | 中断 | 恢复后 1s | 16s |
+
+结论：状态上报（QoS1 + retained）在 30% 丢包下仍完整；下行指令同样可靠；
+末端风险集中在**长断网后的重连退避**，已由 `reconnect_delay_set` 封顶到 10s。
 
 ## 文档索引
 

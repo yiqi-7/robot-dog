@@ -1,3 +1,4 @@
+#include <chrono>
 // ===========================================================================
 // task_runner_node.cpp —— 构造/析构、MQTT 连接、下行指令分发、事件上报
 //
@@ -152,12 +153,18 @@ void TaskRunnerNode::initMqtt()
   mosquitto_message_callback_set(mosq_, &TaskRunnerNode::onMessageCb);
   mosquitto_disconnect_callback_set(mosq_, &TaskRunnerNode::onDisconnectCb);
 
+  // 重连退避：2s 起、指数增长、封顶 10s（官方 API，不干扰库状态机）
+  mosquitto_reconnect_delay_set(mosq_, 2, 10, true);
   int rc = mosquitto_connect_async(mosq_, broker_host_.c_str(), broker_port_, keepalive_);
   if (rc != MOSQ_ERR_SUCCESS) {
     RCLCPP_ERROR(get_logger(), "connect_async 失败: %s", mosquitto_strerror(rc));
     return;
   }
   mosquitto_loop_start(mosq_);   // 独立网络线程，内部自动重连
+  // 重连策略交给 libmosquitto：mosquitto_reconnect_delay_set()
+  // （退避 2s 起、封顶 10s）。手写看门狗会干扰库的连接状态机：
+  // 实测 disconnect+reconnect 连发会让服务器判协议错误踢连接，
+  // 形成 3s 抖动循环；只 reconnect 又会受内核 SYN 退避影响。
 }
 
 void TaskRunnerNode::onConnectCb(struct mosquitto * /*mosq*/, void *obj, int rc)

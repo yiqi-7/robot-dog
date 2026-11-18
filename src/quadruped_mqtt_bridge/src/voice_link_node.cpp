@@ -1,3 +1,4 @@
+#include <chrono>
 // ===========================================================================
 // voice_link_node.cpp —— 语音链路节点：§3.1 音频上行（base64）+ §3.2 TTS 播报
 //
@@ -19,7 +20,7 @@ VoiceLinkNode::VoiceLinkNode() : rclcpp::Node("voice_link")
   robot_id_      = declare_parameter("robot_id", "robot-01");
   robot_name_    = declare_parameter("robot_name", "仿真狗");
   topic_prefix_  = declare_parameter("topic_prefix", "qbot/v1");
-  keepalive_     = declare_parameter("keepalive", 10);   // 与 mqtt_bridge 一致，掉线窗口 ≈ 15s
+  keepalive_     = declare_parameter("keepalive", 30);   // 语音节点放宽：大帧传输会顶掉 10s keepalive（W6 实测）
   username_      = declare_parameter("username", "");
   password_      = declare_parameter("password", "");
 
@@ -125,12 +126,18 @@ void VoiceLinkNode::initMqtt()
   mosquitto_message_callback_set(mosq_, &VoiceLinkNode::onMessageCb);
   mosquitto_disconnect_callback_set(mosq_, &VoiceLinkNode::onDisconnectCb);
 
+  // 重连退避：2s 起、指数增长、封顶 10s（官方 API，不干扰库状态机）
+  mosquitto_reconnect_delay_set(mosq_, 2, 10, true);
   int rc = mosquitto_connect_async(mosq_, broker_host_.c_str(), broker_port_, keepalive_);
   if (rc != MOSQ_ERR_SUCCESS) {
     RCLCPP_ERROR(get_logger(), "connect_async 失败: %s", mosquitto_strerror(rc));
     return;
   }
   mosquitto_loop_start(mosq_);   // 独立网络线程，内部自动重连
+  // 重连策略交给 libmosquitto：mosquitto_reconnect_delay_set()
+  // （退避 2s 起、封顶 10s）。手写看门狗会干扰库的连接状态机：
+  // 实测 disconnect+reconnect 连发会让服务器判协议错误踢连接，
+  // 形成 3s 抖动循环；只 reconnect 又会受内核 SYN 退避影响。
 }
 
 void VoiceLinkNode::onConnectCb(struct mosquitto * /*mosq*/, void *obj, int rc)
