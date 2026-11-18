@@ -94,14 +94,13 @@ public:
         wz_cmd_ = clamp(msg->angular.z, -max_ang_, max_ang_);
         last_cmd_time_ = now();
       });
-    // Nav2 的 collision_monitor 输出是 TwistStamped，走独立话题
-    sub_cmd_st_ = create_subscription<geometry_msgs::msg::TwistStamped>(
-      "cmd_vel_nav", 10,
-      [this](geometry_msgs::msg::TwistStamped::SharedPtr msg) {
-        vx_cmd_ = clamp(msg->twist.linear.x,  -max_lin_, max_lin_);
-        wz_cmd_ = clamp(msg->twist.angular.z, -max_ang_, max_ang_);
-        last_cmd_time_ = now();
-      });
+    // 曾经这里还订阅了 cmd_vel_nav（TwistStamped）"兜底导航指令"，已删除：
+    //   1) cmd_vel_nav 是 controller_server 的原始输出，位于
+    //      smoother → collision_monitor → deadman_guard 整条安全链之前，
+    //      订阅它等于给安全链开一条旁路；
+    //   2) 该话题实际类型是 geometry_msgs/Twist（enable_stamped_cmd_vel: false），
+    //      用 TwistStamped 订阅根本没有匹配的发布端，回调从未触发过——是死代码；
+    //   3) 真正的入口只有末尾的 cmd_vel（安全链终点、经看门狗中继），下面那条订阅即为唯一入口。
     // 执行端心跳：task_runner 崩溃后 Nav2 仍会持续发 cmd_vel，只看 cmd_vel 超时停不下来。
     // 心跳中断 → 本层（最终执行层）强制归零，是"控制端死亡机器人仍在走"的兜底。
     sub_hb_ = create_subscription<std_msgs::msg::String>(
@@ -388,7 +387,6 @@ private:
   rclcpp::Time last_cmd_time_{0, 0, RCL_ROS_TIME};
 
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr sub_cmd_;
-  rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr sub_cmd_st_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_odom_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr sub_js_;
   rclcpp::TimerBase::SharedPtr timer_;

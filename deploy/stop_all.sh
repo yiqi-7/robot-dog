@@ -8,7 +8,9 @@
 # ===========================================================================
 set -euo pipefail
 
-WS="/run/media/wby/shuju/Document/robot-dog"
+# 工作区路径按脚本所在位置推导（脚本在 <工作区>/deploy/ 下），
+# 这样在任意目录 clone 都能直接用，无需改脚本；需要时可用 WS=... 覆盖。
+WS="${WS:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 OPS="${WS}/quadruped-ops"
 LAUNCH="${WS}/src/quadruped_sim/launch/quadruped_gz.launch.py"
 

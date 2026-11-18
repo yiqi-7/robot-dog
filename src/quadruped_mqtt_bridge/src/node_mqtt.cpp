@@ -120,7 +120,7 @@ void MqttBridgeNode::publishSiteMap()
     {"height", 380.0},
     {"zones",  zones},
     {"points", points},
-    {"updatedAt", now().nanoseconds() / 1000000},
+    {"updatedAt", qmb::wallClockMs()},   // 系统时钟，与告警 ts 必须同源
   };
   const std::string payload = site.dump();
   mosquitto_publish(mosq_, nullptr, map_topic_.c_str(),

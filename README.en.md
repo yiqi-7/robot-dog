@@ -73,7 +73,7 @@ sudo apt install libopencv-dev ffmpeg
 ### Build
 
 ```bash
-cd /run/media/wby/shuju/Document/robot-dog   # this workspace (later commands use $(pwd))
+cd <project root>              # later commands use $(pwd), so run from the root
 colcon build --symlink-install
 source install/setup.bash
 ```

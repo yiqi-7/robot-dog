@@ -47,6 +47,11 @@ public:
 private:
   void tick()
   {
+    // 从未收到过任何速度输入（例如纯 teleop 调试、导航还没起）：
+    // 此时本节点的职责是"中继或归零"，而不是凭空发零速去抢 /cmd_vel。
+    // 早先这里没有这个短路，导致 teleop 与看门狗以 10Hz 互抢，机器人点动。
+    if (!in_seen_) return;
+
     // 放行需要同时满足：心跳新鲜（或从未见过执行端）+ 速度输入新鲜。
     // 只判心跳会让"导航结束/急停后无人再发速度"的场景永远重发旧值。
     const bool alive = !hb_seen_ || (now() - last_hb_).seconds() <= hb_timeout_;

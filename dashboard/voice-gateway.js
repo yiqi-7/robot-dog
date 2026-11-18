@@ -512,6 +512,19 @@ function handleVoiceCmd(msg) {
 
 /* ---------------- MQTT 主流程 ---------------- */
 const client = mqtt.connect(MQTT_URL);
+
+// mqtt.js 在连接被拒/断链时会 emit("error")。EventEmitter 没有监听器时
+// Node 会抛未捕获异常直接退出——而云端/公网断链是常态，网关会陷入反复崩溃。
+client.on("error", (err) => {
+  console.error(`[mqtt] 连接错误：${err?.message ?? err}（等待自动重连）`);
+});
+client.on("close", () => {
+  console.warn("[mqtt] 连接已关闭，等待重连…");
+});
+client.on("reconnect", () => {
+  console.log(`[mqtt] 正在重连 ${MQTT_URL}`);
+});
+
 client.on("connect", () => {
   console.log(`[mqtt] 已连接 ${MQTT_URL}`);
   client.subscribe([

@@ -11,7 +11,9 @@
 set -euo pipefail
 
 # ---------------------------- 配置 ----------------------------
-WS="/run/media/wby/shuju/Document/robot-dog"
+# 工作区路径按脚本所在位置推导（脚本在 <工作区>/deploy/ 下），
+# 这样在任意目录 clone 都能直接用，无需改脚本；需要时可用 WS=... 覆盖。
+WS="${WS:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 MAP="${WS}/maps/factory_full.yaml"
 LAUNCH="${WS}/src/quadruped_sim/launch/quadruped_gz.launch.py"
 CLOUD_HOST="${CLOUD_HOST:-43.172.91.67}"      # 腾讯云中转服务器

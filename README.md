@@ -53,6 +53,15 @@ cd deploy
 
 详细说明见 **[deploy/README-DEPLOY.md](deploy/README-DEPLOY.md)**。
 
+> **语音功能需要额外下载 ASR 模型**（229MB，不入库）。官方发布包：
+> ```bash
+> wget https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/\
+> sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
+> tar xvf sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
+> # 把 model.int8.onnx 与 tokens.txt 放进 dashboard/models/sensevoice/
+> ```
+> 不放模型也能跑：网关会打印"语音通道关闭，仅文本注入可用"，其余功能不受影响。
+
 ---
 
 ## 快速开始
@@ -72,7 +81,7 @@ sudo apt install libopencv-dev ffmpeg
 ### 编译
 
 ```bash
-cd /run/media/wby/shuju/Document/robot-dog   # 本工作区（后面命令用 $(pwd)）
+cd <本项目根目录>              # 后面命令用 $(pwd)，所以在根目录执行
 colcon build --symlink-install
 source install/setup.bash
 ```

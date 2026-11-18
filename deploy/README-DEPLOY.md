@@ -107,7 +107,16 @@ EOF
 npm install --no-audit --no-fund     # 约 45MB
 
 # ---- 4. ASR 模型（229MB，放到 dashboard/models/sensevoice/）----
-# 需要 model.int8.onnx（228MB）+ tokens.txt（0.3MB）
+# 官方来源：sherpa-onnx 的 SenseVoice 发布包（中英日韩粤，int8 量化）
+wget https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
+tar xvf sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
+mkdir -p /opt/qbot/dashboard/models/sensevoice
+cp sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/model.int8.onnx \
+   sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/tokens.txt \
+   /opt/qbot/dashboard/models/sensevoice/
+# 校验：model.int8.onnx 约 228MB（239233841 字节）、tokens.txt 约 308KB（315894 字节）
+# 模型缺失时网关不会崩，只是打印"语音通道关闭，仅文本注入可用"
+
 
 # ---- 5. 部署脚本 ----
 sudo mkdir -p /opt/qbot/deploy && sudo chown $USER:$USER /opt/qbot/deploy

@@ -149,7 +149,7 @@
         {"robotId",   robot_id_},
         {"name",      robot_name_},
         {"model",     robot_model_},
-        {"ts",        now().nanoseconds() / 1000000},
+        {"ts",        qmb::wallClockMs()},                // 系统时钟：看板按它算"多久之前"
         {"status",    status_},
         {"battery",   std::round(battery_ * 10.0) / 10.0},
         // 位置：仿真坐标 → 看板地图坐标

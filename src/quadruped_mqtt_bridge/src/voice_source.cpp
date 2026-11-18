@@ -195,6 +195,11 @@ public:
       });
 
     publishInfo();
+    // 下面这行原本把三元表达式（结果是 std::string）直接传给 %s，
+    // 属于未定义行为。先落成局部变量再取 c_str()，别让它进变参列表。
+    const std::string mode_suffix =
+      (mode_ == "file") ? (" (" + wav_path_ + (loop_ ? ", loop" : "") + ")")
+                        : std::string();
     RCLCPP_INFO(get_logger(),
       "语音采集已启动\n"
       "  模式     : %s%s\n"
@@ -204,7 +209,7 @@ public:
       "  服务     : voice/capture（std_srvs/srv/Trigger）\n"
       "  按键说话 : voice/ptt（std_msgs/Bool，true 开录 / false 收尾）",
       mode_.c_str(),
-      mode_ == "file" ? (" (" + wav_path_ + (loop_ ? ", loop" : "") + ")") : "",
+      mode_suffix.c_str(),
       sample_rate_, channels_, frame_ms_, thresh_, silence_ms_,
       min_ms_ / 1000.0, max_ms_ / 1000.0);
 

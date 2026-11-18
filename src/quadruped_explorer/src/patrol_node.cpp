@@ -84,7 +84,12 @@ public:
       }
     }
     if (route_.size() < 2) {
-      RCLCPP_ERROR(get_logger(), "有效航点不足 2 个，巡逻无意义");
+      // 必须致命退出：下面的定时器会做 route_[waypoint_index_] 和 % route_.size()，
+      // 空表继续跑就是下标越界 + 模零（段错误/SIGFPE），而且发生在定时器回调里很难定位。
+      RCLCPP_FATAL(get_logger(),
+        "有效航点不足 2 个（当前 %zu 个），巡逻无意义，节点退出。请检查 waypoints 参数格式：x,y,name;x,y,name",
+        route_.size());
+      throw std::runtime_error("patrol waypoints invalid");
     }
     RCLCPP_INFO(get_logger(), "巡逻节点就绪，%zu 个航点", route_.size());
 

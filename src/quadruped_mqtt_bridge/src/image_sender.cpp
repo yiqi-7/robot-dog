@@ -104,8 +104,10 @@ public:
 
     last_jpeg_ = now();
 
+    // 格式符必须与成员声明的真实宽度一致：jpeg_quality_ 是 long（见成员声明），
+    // rtsp_port_ 是 int。原来两处都写 %ld，port 那处是错的（变参类型不匹配属未定义行为）。
     RCLCPP_INFO(get_logger(),
-      "image_sender 就绪：JPEG q%ld @%.1fHz -> mqtt %s；H264(禁B帧) -> rtsp://%s:%ld/cam/%s",
+      "image_sender 就绪：JPEG q%ld @%.1fHz -> mqtt %s；H264(禁B帧) -> rtsp://%s:%d/cam/%s",
       jpeg_quality_, jpeg_fps_, state_topic_.c_str(),
       rtsp_server_.c_str(), rtsp_port_, robot_id_.c_str());
   }
