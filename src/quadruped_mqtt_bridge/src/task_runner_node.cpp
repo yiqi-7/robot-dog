@@ -304,6 +304,7 @@ void TaskRunnerNode::handleCmd(const std::string &text)
       navigating_ = false;
       task_.clear();
       estop_latched_ = false;   // 只有 resume 能解除急停闩锁
+      pending_goals_.clear();   // 复位后不保留待下发目标，避免旧目标被事后补发
     }
     publishTaskState();
     pausePatrol(false);
@@ -347,7 +348,7 @@ void TaskRunnerNode::handleCmd(const std::string &text)
             auto it = task_terminal_.find(task_id);
             if (it != task_terminal_.end()) {
               dup = true;
-              dup_status = it->second.first;
+              dup_status = it->second.status;
             }
           }
         }

@@ -44,6 +44,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -103,9 +104,17 @@ public:
   // 结束当前任务：清状态、停车、恢复巡逻、回写任务状态
   void finishTask(const std::string & detail, Outcome outcome = Outcome::Canceled);
   void cancelNavigation(const char * reason);
-  void writeBackTask(int task_id, const char *new_status);
+  // 回写单条任务状态：按 id 合并（只改这一条，其余条目原样保留），
+  // reason 非空时写入 statusNote（终态原因，看板据此显示"为什么撤销"）。
+  void writeBackTask(int task_id, const char *new_status,
+                     const std::string &reason = std::string());
   void onFleetTasks(const std::string &text);
   void onNavTimer();
+
+  // ---------------- 待下发 Nav2 目标（重试） ----------------
+  void enqueueNavGoal(double x, double y, const std::string & name, int task_id);
+  void clearPendingGoals();
+  void pumpPendingGoal();
   void publishInitialPose();
   void pausePatrol(bool paused);
 
@@ -130,10 +139,20 @@ public:
 
   struct mosquitto *mosq_ = nullptr;
 
-  // 3.5 任务列表：看板发来的全量快照 + assign 缓存的完整任务对象
-  json fleet_tasks_;                    // 最新一份全量数组
+  // 3.5 任务列表：只保存【最新一次收到的远端表】作为合并基准，
+  // 不再把它当作"可以整表覆盖发布"的本地缓存（那会删掉别人新增的任务）。
+  json fleet_tasks_;                    // 最近一次收到的远端全量数组（合并基准）
   json cached_task_;                    // assign 报文里的 task 对象
-  std::map<int, std::pair<std::string, long long>> task_terminal_;  // id → (终态, 时间)
+
+  // 本机对某个任务写过的终态。rev 是写这条终态时采用的版本号（见 writeBackTask）：
+  // 收到远端列表时只有"本地 rev >= 远端 rev"才补回，避免拿旧状态压掉远端新数据。
+  struct TerminalStatus
+  {
+    std::string status;      // completed / revoked
+    long long ts = 0;        // 写入时刻（epoch ms）
+    long long rev = 0;       // 写入时采用的 rev
+  };
+  std::map<int, TerminalStatus> task_terminal_;   // id → 本机终态
   int active_task_id_ = 0;              // 正在执行的任务 id（回写用）
 
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_odom_;
@@ -164,4 +183,27 @@ public:
   std::string nav_target_name_;
   std::shared_ptr<NavGoalHandle> nav_goal_;   // 当前 Nav2 目标句柄（用于取消）
   bool initial_pose_sent_ = false;            // 初始位姿是否已对齐
+
+  // ---------------- Nav2 目标重试 ----------------
+  // 启动时序：bridge ≈5s、Nav2 ≈20s。启动后立刻派单时 action server 往往还没
+  // 起来；旧实现只等 2s 就放弃、而 onNavTimer 从不重发 → 任务必挂满 120s 超时。
+  // 现在把"还没成功下发"的目标放进队列，由 onNavTimer 每 2s 重试一次，
+  // 最多 15 次（≈30s），用完才判失败并回写 status=revoked（带原因）。
+  static constexpr int kNavRetryMax = 15;          // 最多尝试次数
+  static constexpr int kNavRetryIntervalS = 2;     // 两次尝试的间隔（秒）
+  static constexpr int kNavInflightTimeoutS = 5;   // 发出后等 goal_response 的上限（秒）
+
+  struct PendingGoal
+  {
+    double x = 0.0, y = 0.0;
+    std::string name;
+    int task_id = 0;
+    unsigned long long seq = 0;      // 入队序号：区分"换了任务但坐标相同"的情况
+    int attempts = 0;                // 已尝试次数（日志里的"第 k 次"）
+    bool inflight = false;           // 已发出、正等 goal_response 回调
+    std::chrono::steady_clock::time_point next_try;   // 下次允许尝试的时刻
+    std::chrono::steady_clock::time_point sent_at;    // 本次发出时刻
+  };
+  std::deque<PendingGoal> pending_goals_;   // 待下发目标（队首即当前要发的）
+  unsigned long long pending_seq_ = 0;
 };
