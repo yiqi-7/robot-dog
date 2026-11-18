@@ -13,8 +13,10 @@
 # ===========================================================================
 set -euo pipefail
 
-WS="/run/media/wby/shuju/Document/robot-dog"
-OPS="${WS}/quadruped-ops"
+# 路径允许环境变量覆盖：云端没有 /run/media/... 这个盘，
+# 直接写死会让云端执行时 mkdir 失败、set -e 退出
+WS="${WS:-/run/media/wby/shuju/Document/robot-dog}"
+OPS="${OPS:-${WS}/quadruped-ops}"
 CLOUD_HOST="${CLOUD_HOST:-43.172.91.67}"
 MQTT_PORT="${MQTT_PORT:-1883}"
 WS_PORT="${WS_PORT:-8083}"
@@ -95,7 +97,9 @@ case "$MODE" in
   local|cloud)
     for t in "${TARGETS[@]}"; do
       mkdir -p "$(dirname "$t")"
-      [[ -f "${t}.bak" ]] || [[ ! -f "$t" ]] || cp "$t" "${t}.bak"
+      # 只在首次切换时留底（.orig.bak），之后切换不覆盖它，
+      # 这样 restore 总能回到出厂/上一版本，而不是"上一次切换的结果"
+      [[ -f "${t}.orig.bak" ]] || [[ ! -f "$t" ]] || cp "$t" "${t}.orig.bak"
       if [[ "$MODE" == "local" ]]; then gen_local > "$t"; else gen_cloud > "$t"; fi
       info "已写入 $MODE 配置: $t"
     done
@@ -110,7 +114,12 @@ case "$MODE" in
     ;;
   restore)
     for t in "${TARGETS[@]}"; do
-      if [[ -f "${t}.bak" ]]; then mv "${t}.bak" "$t"; info "已恢复 $t"; else info "无备份: $t"; fi
+      if [[ -f "${t}.orig.bak" ]]; then
+        cp "${t}.orig.bak" "$t"     # 用 cp 而非 mv，保留快照可反复恢复
+        info "已恢复 $t"
+      else
+        info "无原始备份: $t"
+      fi
     done
     ;;
   *) usage; exit 1 ;;

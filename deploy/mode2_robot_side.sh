@@ -57,6 +57,11 @@ die()  { printf '\033[31m[robot]\033[0m %s\n' "$*" >&2; exit 1; }
 
 stop_ros() {
   info "清理旧 ROS2 进程…"
+  # 先礼后兵：给 image_sender 一个 SIGTERM，让它有机会走析构里的 pclose() 收掉
+  # ffmpeg 子进程。直接 -9 会让 popen 出来的 `sh -c ffmpeg` 变成孤儿进程，
+  # 反复执行脚本就会堆积多组孤儿，抢同一个 RTSP path。
+  pkill -15 -f "image_sende[r]" 2>/dev/null || true
+  sleep 2
   local pats=(
     "gz-sim-mai[n]" "ros2 launch quadruped_si[m]" "controller_serve[r]" "planner_serve[r]"
     "bt_navigato[r]" "behavior_serve[r]" "map_serve[r]" "amc[l]" "lifecycle_manage[r]"
@@ -64,9 +69,14 @@ stop_ros() {
     "voice_sourc[e]" "champ_joint_rela[y]" "quadruped_controlle[r]" "patrol_nod[e]"
     "image_sende[r]" "mqtt_bridg[e]" "task_runne[r]" "voice_lin[k]" "deadman_guar[d]"
     "gait_controlle[r]" "odom_pu[b]" "camera_info_pu[b]"
+    "gz-sim-gu[i]-client" "gz si[m]"
   )
   local p
   for p in "${pats[@]}"; do pkill -9 -f "$p" 2>/dev/null || true; done
+  # 清理 image_sender 拉起的 ffmpeg 推流进程。模式串不写端口，
+  # 因为 rtsp 端口/地址会随模式变化，写死端口会漏杀。
+  pkill -9 -f "ffmpeg .*rawvideo.*-f rtsp" 2>/dev/null || true
+  pkill -9 -f "sh -c -- ffmpeg .*rawvideo" 2>/dev/null || true
   sleep 4
 }
 
@@ -88,15 +98,18 @@ else
   warn "RTSP ${CLOUD_HOST}:${RTSP_PORT} 不可达 —— 视频推流将失败，看板只能用 MQTT-JPEG 兜底帧"
 fi
 
-[[ "$NO_ROS" -eq 1 ]] && { info "--no-ros 指定，仅做预检，退出"; exit 0; }
-
 # ---------------------------- 推流目标 ----------------------------
 if [[ "$KEEP_RTSP" -eq 0 ]]; then
   cp -n "$LAUNCH" "${LAUNCH}.rtsp.bak" 2>/dev/null || true
-  # 只改 image_sender 段里的 rtsp_server（该参数目前写死在 launch 中）
+  # rtsp_server 与 rtsp_port 目前都写死在 launch 里，两个都要改，否则端口变了提示会骗人
   sed -i "s|^\(\s*\)\"rtsp_server\": \"[^\"]*\"|\1\"rtsp_server\": \"${CLOUD_HOST}\"|" "$LAUNCH"
+  sed -i "s|^\(\s*\)\"rtsp_port\": [0-9]*|\1\"rtsp_port\": ${RTSP_PORT}|" "$LAUNCH"
+  # sed 不匹配时退出码仍是 0，必须回读校验
+  grep -q "\"rtsp_server\": \"${CLOUD_HOST}\"" "$LAUNCH" || die "sed 未能修改 rtsp_server，请检查 launch 文件格式"
   info "image_sender 推流目标 → rtsp://${CLOUD_HOST}:${RTSP_PORT}/cam/${ROBOT_ID}"
 fi
+
+[[ "$NO_ROS" -eq 1 ]] && { info "--no-ros 指定，已切换配置但不起 ROS2，退出"; exit 0; }
 
 # ---------------------------- 启动 ----------------------------
 stop_ros

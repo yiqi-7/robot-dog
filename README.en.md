@@ -89,7 +89,7 @@ ros2 launch quadruped_sim quadruped_gz.launch.py \
 
 ### Dashboard
 
-```
+```bash
 http://43.172.91.67:8080          # Mode 2
 http://127.0.0.1:8080             # Mode 1
 ```

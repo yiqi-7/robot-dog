@@ -1,4 +1,7 @@
-# quadruped-ops 为什么在这个仓库里
+# dashboard/ 为什么在这个仓库里
+
+> 本地运行副本 `quadruped-ops/`（含 `node_modules`、`dist`、ASR 模型）
+> **不入库**，由根 `.gitignore` 忽略；它只是本目录的部署副本。
 
 > 本文档回答三个问题：**这是什么、为什么放在 robot-dog 仓库、缺了什么怎么补。**
 
@@ -15,7 +18,7 @@ robot-dog（下层：机器狗本体）        quadruped-ops（上层：指挥�
               MQTT 局域网交换数据
 ```
 
-两端共同遵守 `quadruped-ops/MQTT-INTERFACE.md`（v2.1）与 `VOICE-INTERFACE.md` 的约定。
+两端共同遵守 `dashboard/MQTT-INTERFACE.md`（v2.1）与 `VOICE-INTERFACE.md` 的约定。
 
 ## 二、为什么放进 robot-dog 仓库
 
@@ -26,7 +29,7 @@ robot-dog（下层：机器狗本体）        quadruped-ops（上层：指挥�
 | **改动可追溯** | 为联调做的适配（配置、桥接）能和机器人代码一起 review / 回滚 |
 | **对齐课程** | 第三章起需要两端同时在场，集中管理符合项目实际形态 |
 
-⚠️ **来源说明**：`quadruped-ops/` 原始代码由课程/项目方提供，本仓库为**引入（vendored）**
+⚠️ **来源说明**：本目录 `dashboard/` 的原始代码由课程/项目方提供，本仓库为**引入（vendored）**
 而非原创。自研部分是 `src/quadruped_sim/`。两者请勿混淆归属。
 
 ## 三、哪些文件没有入库（以及为什么）
@@ -42,12 +45,12 @@ GitHub 单文件上限 100 MB，以下内容体积超限或可从官方重新获
 | `node_modules/` | 280 MB | 依赖包，可再生成 | `npm install` |
 | `voice-clips/` | — | 运行时生成的语音片段 | 自动创建 |
 
-> 入库部分约 **13 MB**（源码 + 配置 + 已构建的 `dist/` + 文档），保证结构与逻辑完整可读。
+> 入库部分约 **13 MB**（源码 + 配置 + 文档），保证结构与逻辑完整可读。
 
 ## 四、恢复完整运行环境
 
 ```bash
-cd quadruped-ops
+cd dashboard
 
 # 1. 依赖
 npm install
@@ -77,4 +80,4 @@ Linux/macOS 下需自行替换 `mediamtx.exe` → `mediamtx`、`runtime/node.exe
 | 机器狗 → 网关 | `qbot/v1/robots/{id}/audio` | 语音片段（PCM） |
 | 网关 → 机器狗 | `qbot/v1/robots/{id}/tts` | TTS 播报文本 |
 
-机器人侧实现位于 `src/quadruped_sim/src/mqtt_bridge.cpp`（C++）。
+机器人侧实现位于 `src/quadruped_mqtt_bridge/src/`（`main.cpp` / `node_core.cpp` / `node_telemetry.cpp` / `node_mqtt.cpp` 等，C++）。

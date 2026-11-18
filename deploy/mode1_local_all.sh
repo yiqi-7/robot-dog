@@ -90,6 +90,11 @@ die()  { printf '\033[31m[mode1]\033[0m %s\n' "$*" >&2; exit 1; }
 # 停止旧的 ROS2 相关进程。模式串都写成 xxx[x] 形式，避免 pkill 匹配到脚本自身
 stop_ros() {
   info "清理旧 ROS2 进程…"
+  # 先礼后兵：给 image_sender 一个 SIGTERM，让它有机会走析构里的 pclose() 收掉
+  # ffmpeg 子进程。直接 -9 会让 popen 出来的 `sh -c ffmpeg` 变成孤儿进程，
+  # 反复执行脚本就会堆积多组孤儿，抢同一个 RTSP path。
+  pkill -15 -f "image_sende[r]" 2>/dev/null || true
+  sleep 2
   local pats=(
     "gz-sim-mai[n]" "ros2 launch quadruped_si[m]" "controller_serve[r]" "planner_serve[r]"
     "bt_navigato[r]" "behavior_serve[r]" "map_serve[r]" "amc[l]" "lifecycle_manage[r]"
@@ -97,9 +102,14 @@ stop_ros() {
     "voice_sourc[e]" "champ_joint_rela[y]" "quadruped_controlle[r]" "patrol_nod[e]"
     "image_sende[r]" "mqtt_bridg[e]" "task_runne[r]" "voice_lin[k]" "deadman_guar[d]"
     "gait_controlle[r]" "odom_pu[b]" "camera_info_pu[b]"
+    "gz-sim-gu[i]-client" "gz si[m]"
   )
   local p
   for p in "${pats[@]}"; do pkill -9 -f "$p" 2>/dev/null || true; done
+  # 清理 image_sender 拉起的 ffmpeg 推流进程。模式串不写端口，
+  # 因为 rtsp 端口/地址会随模式变化，写死端口会漏杀。
+  pkill -9 -f "ffmpeg .*rawvideo.*-f rtsp" 2>/dev/null || true
+  pkill -9 -f "sh -c -- ffmpeg .*rawvideo" 2>/dev/null || true
   sleep 4
 }
 
@@ -127,8 +137,11 @@ restore_rtsp() {
 wait_port() {
   local port="$1" name="$2" tries="${3:-30}"
   local i
+  local line
   for ((i=1; i<=tries; i++)); do
-    if ss -lnt 2>/dev/null | grep -q ":${port} "; then
+    # 先收进变量再匹配：pipefail 下 `ss | grep -q` 会因 SIGPIPE 让整条管道返回非零
+    line="$(ss -lnt 2>/dev/null || true)"
+    if grep -q ":${port} " <<<"$line"; then
       info "${name} 已监听 :${port}"
       return 0
     fi
@@ -141,6 +154,7 @@ wait_port() {
 # ---------------------------- 前置检查 ----------------------------
 info "=== 模式 1：本地全栈 ==="
 [[ -d "$WS" ]]  || die "工作区不存在: $WS"
+[[ -f "$WS/install/setup.bash" ]] || die "工作区未构建：$WS/install/setup.bash 不存在，先 colcon build"
 [[ -d "$OPS" ]] || die "看板目录不存在: $OPS"
 [[ -n "$NODE_BIN" ]] || die "未找到 node，请先安装 Node.js"
 
@@ -169,6 +183,16 @@ fi
 if [[ "$DO_BUILD" -eq 1 ]]; then
   info "重新构建看板前端…"
   ( cd "$OPS" && npm run build >/tmp/qbot_mode1_build.log 2>&1 ) || die "构建失败，见 /tmp/qbot_mode1_build.log"
+
+  # 构建后必须校验运行时配置链路是否还在，否则会"构建成功但功能静默失效"：
+  # public/qbot-config.js 要被 vite 拷进 dist/，index.html 要保留 script 标签，
+  # bundle 要保留 __QBOT_CONFIG__ 读取逻辑。这三处任一丢失，
+  # switch_config.sh/local|cloud 就完全不起作用了。
+  local _dir="${OPS:-$OPS}"
+  [[ -f "$_dir/dist/qbot-config.js" ]] || die "构建后 dist/qbot-config.js 丢失（public/ 下的配置没被拷贝）"
+  grep -q 'qbot-config\.js' "$_dir/dist/index.html" || die "构建后 dist/index.html 不再引用 qbot-config.js，运行时配置会失效"
+  grep -rq '__QBOT_CONFIG__' "$_dir/dist/assets/" || die "构建后 bundle 不含 __QBOT_CONFIG__ 读取逻辑，运行时配置会失效"
+  info "构建后已校验运行时配置链路完整"
 fi
 
 # ---------------------------- 启动看板 ----------------------------
@@ -177,8 +201,9 @@ if [[ "$NO_DASH" -eq 0 ]]; then
     info "看板已在 :${DASH_PORT} 运行，跳过"
   else
     info "启动看板页面 (${DASH_PORT})…"
-    ( cd "$OPS" && setsid nohup env PORT="$DASH_PORT" "$NODE_BIN" server.js >"$LOG_DASH" 2>&1 & )
-    wait_port "$DASH_PORT" "看板" 20 || true
+    ( cd "$OPS" || exit 1
+      setsid nohup env PORT="$DASH_PORT" "$NODE_BIN" server.js >"$LOG_DASH" 2>&1 & ) || die "看板启动失败"
+    wait_port "$DASH_PORT" "看板" 20 || die "看板未在 ${DASH_PORT} 监听，见 $LOG_DASH"
   fi
 fi
 
@@ -204,8 +229,16 @@ if [[ "$NO_ROS" -eq 0 ]]; then
   [[ -f "$LAUNCH" ]] || die "launch 文件不存在: $LAUNCH"
 
   stop_ros
-  trap 'restore_rtsp "$LAUNCH"' EXIT
-  patch_rtsp "$LAUNCH" "127.0.0.1"
+  # H2：本机没有 mediamtx 时，把 rtsp 指到 127.0.0.1 只会让 ffmpeg 立刻失败，
+  # 而 image_sender 在 ffmpeg 挂掉后会连 JPEG 兜底帧一起停（见 image_sender.cpp
+  # 的 `if (!ffmpeg_pipe_) return;`）。所以这种情况下保持 launch 原值不动。
+  trap 'restore_rtsp "$LAUNCH"' EXIT INT TERM HUP
+  if [[ -x /usr/local/bin/mediamtx ]]; then
+    patch_rtsp "$LAUNCH" "127.0.0.1"
+  else
+    warn "本机无 mediamtx，保持 launch 的 rtsp_server 原值不动"
+    warn "  （若强行指向不可达地址，ffmpeg 失败后 JPEG 兜底帧也会停）"
+  fi
 
   info "启动 ROS2 仿真（broker_host=${BROKER_HOST}）…"
   ( cd "$WS" && setsid nohup bash -c "
@@ -248,7 +281,12 @@ if [[ "$NO_ROS" -eq 0 ]]; then
     fi
   fi
 
-  [[ "$local_ok" -eq 1 ]] && info "模式 1 启动完成" || warn "模式 1 启动完成但自检有告警"
+  if [[ "$local_ok" -eq 1 ]]; then
+    info "模式 1 启动完成"
+  else
+    warn "模式 1 启动完成但自检未通过（见 $LOG_ROS）"
+    exit 2
+  fi
 fi
 
 cat <<EOF

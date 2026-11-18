@@ -8,7 +8,7 @@
 Quadruped inspection robot on ROS 2 + Gazebo: CHAMP gait, Nav2, MQTT ops dashboard, WebRTC video, voice pipeline (Opus → ASR → LLM). Runs local all-in-one or split with a cloud relay.
 ```
 
-字符数：178 / 350 ✅
+字符数：183 / 350 ✅
 
 **中文版（若偏好中文描述）：**
 
@@ -16,7 +16,7 @@ Quadruped inspection robot on ROS 2 + Gazebo: CHAMP gait, Nav2, MQTT ops dashboa
 ROS 2 + Gazebo 四足巡检机器人：CHAMP 步态、Nav2 导航、MQTT 运维看板、WebRTC 视频、语音链路（Opus→ASR→大模型决策）。支持本地全栈与云端中转两种部署。
 ```
 
-字符数：95 / 350 ✅
+字符数：97 / 350 ✅
 
 ---
 

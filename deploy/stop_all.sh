@@ -27,14 +27,18 @@ usage() {
 EOF
 }
 
-MODE="${1:-all}"
+MODE=""
 WITH_INFRA=0
 for a in "$@"; do
   case "$a" in
     -h|--help) usage; exit 0 ;;
     --with-infra) WITH_INFRA=1 ;;
+    local|cloud|robot|all) MODE="$a" ;;
+    *) echo "未知参数: $a（local|cloud|robot|all，或用 -h 查看帮助）"; exit 1 ;;
   esac
 done
+# 允许只写 --with-infra：此时默认按 all 处理
+MODE="${MODE:-all}"
 
 info() { printf '\033[36m[stop]\033[0m %s\n' "$*"; }
 
@@ -47,11 +51,15 @@ stop_ros() {
     "voice_sourc[e]" "champ_joint_rela[y]" "quadruped_controlle[r]" "patrol_nod[e]"
     "image_sende[r]" "mqtt_bridg[e]" "task_runne[r]" "voice_lin[k]" "deadman_guar[d]"
     "gait_controlle[r]" "odom_pu[b]" "camera_info_pu[b]"
+    "gz-sim-gu[i]-client" "gz si[m]"
   )
   local p
   for p in "${pats[@]}"; do pkill -9 -f "$p" 2>/dev/null || true; done
-  # ffmpeg 推流子进程
-  pkill -9 -f "ffmpeg.*8554" 2>/dev/null || true
+  # ffmpeg 推流子进程：模式串不写端口，端口/地址随模式变化，写死会漏杀
+  pkill -15 -f "image_sende[r]" 2>/dev/null || true
+  sleep 1
+  pkill -9 -f "ffmpeg .*rawvideo.*-f rtsp" 2>/dev/null || true
+  pkill -9 -f "sh -c -- ffmpeg .*rawvideo" 2>/dev/null || true
   sleep 3
   info "ROS2 已停止"
 }
@@ -59,7 +67,14 @@ stop_ros() {
 stop_apps() {
   info "停止语音网关与看板…"
   pkill -f "voice-gateway\.j[s]" 2>/dev/null || true
-  pkill -f "node.*server\.j[s]" 2>/dev/null || true
+  # 只杀 serve 本项目 dist 的 server.js，避免误杀机器上别的 node 服务
+  if [[ -d "$OPS" ]]; then
+    local pid cwd
+    for pid in $(pgrep -f "server\.j[s]" 2>/dev/null || true); do
+      cwd="$(readlink -f "/proc/${pid}/cwd" 2>/dev/null || true)"
+      if [[ "$cwd" == "$OPS" ]]; then kill -9 "$pid" 2>/dev/null || true; fi
+    done
+  fi
   sleep 2
   info "语音网关/看板已停止"
 }

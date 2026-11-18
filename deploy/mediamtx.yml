@@ -21,4 +21,7 @@ authInternalUsers:
       - action: publish
       - action: read
 paths:
+  # 兜底路径：任意 robot id 都允许推/拉，否则换 id 时
+  # MediaMTX 会拒连并打印 path 'cam/xxx' is not configured
+  all_others:
   cam/robot-01:

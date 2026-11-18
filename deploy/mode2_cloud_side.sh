@@ -80,8 +80,10 @@ die()  { printf '\033[31m[cloud]\033[0m %s\n' "$*" >&2; exit 1; }
 
 wait_port() {
   local port="$1" name="$2" tries="${3:-30}" i
+  local line
   for ((i=1; i<=tries; i++)); do
-    if ss -lnt 2>/dev/null | grep -q ":${port} "; then info "${name} 已监听 :${port}"; return 0; fi
+    line="$(ss -lnt 2>/dev/null || true)"
+    if grep -q ":${port} " <<<"$line"; then info "${name} 已监听 :${port}"; return 0; fi
     sleep 1
   done
   warn "${name} 未监听 :${port}"; return 1
@@ -140,6 +142,8 @@ if [[ "$ONLY_CHECK" -eq 1 ]]; then health_check; exit $?; fi
 [[ -n "$NODE_BIN" ]] || die "未找到 node"
 [[ -d "$APP_DIR" ]] || die "看板目录不存在: $APP_DIR（用 --app-dir 指定）"
 [[ -d "$APP_DIR/node_modules" ]] || warn "警告: $APP_DIR 缺少 node_modules，看板/网关可能起不来"
+[[ -f "$APP_DIR/server.js" ]] || die "$APP_DIR 缺少 server.js"
+[[ -f "$APP_DIR/dist/index.html" ]] || warn "警告: $APP_DIR/dist/index.html 不存在，看板页面会 404（前端未构建？）"
 
 info "=== 模式 2：云端一侧 ==="
 
@@ -160,7 +164,7 @@ if [[ -x /usr/local/bin/mediamtx ]] || systemctl list-unit-files 2>/dev/null | g
   wait_port "$RTSP_PORT" "RTSP" || warn "RTSP 未监听"
   wait_port "$WHEP_PORT" "WHEP" || warn "WHEP 未监听"
   # 关键：MediaMTX 必须向浏览器宣告公网 IP，否则 ICE 建连失败
-  if ! sudo grep -q "$PUBLIC_IP" /etc/mediamtx/mediamtx.yml 2>/dev/null; then
+  if ! grep -Esq "^[[:space:]]*webrtcAdditionalHosts:.*${PUBLIC_IP//./\\.}" /etc/mediamtx/mediamtx.yml 2>/dev/null; then
     warn "mediamtx.yml 中未见 ${PUBLIC_IP}，公网 WebRTC 可能建连失败"
     warn "  应配置: webrtcAdditionalHosts: [${PUBLIC_IP}]"
   fi
@@ -172,6 +176,16 @@ fi
 if [[ "$DO_BUILD" -eq 1 ]]; then
   info "构建看板前端…"
   ( cd "$APP_DIR" && npm run build >/tmp/qbot_cloud_build.log 2>&1 ) || die "构建失败，见 /tmp/qbot_cloud_build.log"
+
+  # 构建后必须校验运行时配置链路是否还在，否则会"构建成功但功能静默失效"：
+  # public/qbot-config.js 要被 vite 拷进 dist/，index.html 要保留 script 标签，
+  # bundle 要保留 __QBOT_CONFIG__ 读取逻辑。这三处任一丢失，
+  # switch_config.sh/local|cloud 就完全不起作用了。
+  local _dir="${APP_DIR}"
+  [[ -f "$_dir/dist/qbot-config.js" ]] || die "构建后 dist/qbot-config.js 丢失（public/ 下的配置没被拷贝）"
+  grep -q 'qbot-config\.js' "$_dir/dist/index.html" || die "构建后 dist/index.html 不再引用 qbot-config.js，运行时配置会失效"
+  grep -rq '__QBOT_CONFIG__' "$_dir/dist/assets/" || die "构建后 bundle 不含 __QBOT_CONFIG__ 读取逻辑，运行时配置会失效"
+  info "构建后已校验运行时配置链路完整"
 fi
 
 # 4) 看板页面
@@ -180,8 +194,9 @@ if [[ "$NO_DASH" -eq 0 ]]; then
     info "看板已在 :${DASH_PORT} 运行"
   else
     info "启动看板 (${DASH_PORT})…"
-    ( cd "$APP_DIR" && setsid nohup env PORT="$DASH_PORT" "$NODE_BIN" server.js >"$LOG_DASH" 2>&1 & )
-    wait_port "$DASH_PORT" "看板" 20 || true
+    ( cd "$APP_DIR" || exit 1
+      setsid nohup env PORT="$DASH_PORT" "$NODE_BIN" server.js >"$LOG_DASH" 2>&1 & ) || die "看板启动失败"
+    wait_port "$DASH_PORT" "看板" 20 || die "看板未在 ${DASH_PORT} 监听，见 $LOG_DASH"
   fi
 fi
 
@@ -202,7 +217,9 @@ if [[ "$NO_GW" -eq 0 ]]; then
 fi
 
 sleep 2
-health_check || true
+if ! health_check; then
+  warn "健康检查有未通过项，见上面的告警；服务可能未完全就绪"
+fi
 
 cat <<EOF
 

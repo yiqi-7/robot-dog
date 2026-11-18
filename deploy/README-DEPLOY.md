@@ -17,7 +17,7 @@
 ## 模式 1：本地全栈（TITAN_V 单机）
 
 ```bash
-cd /run/media/wby/shuju/Document/robot-dog/tools/deploy
+cd /run/media/wby/shuju/Document/robot-dog/deploy
 
 ./switch_config.sh local        # 看板配置指向 127.0.0.1
 ./mode1_local_all.sh            # 一条命令起全部
