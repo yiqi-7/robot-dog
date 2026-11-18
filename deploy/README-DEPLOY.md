@@ -93,7 +93,9 @@ sudo apt-get update && sudo apt-get install -y ffmpeg
 # ---- 3. 看板代码 ----
 sudo mkdir -p /opt/qbot/dashboard && sudo chown $USER:$USER /opt/qbot/dashboard
 cd /opt/qbot/dashboard
-# 上传：dist/ server.js voice-gateway.js voice-codec.js
+# 推荐用一键同步（自动打包/上传/构建/重启，避免手工拷贝漂移）：
+#   ./deploy/push_cloud_app.sh
+# 手工方式：上传 dist/ server.js voice-gateway.js voice-codec.js
 # 运行时只需两个依赖，不必装整套前端依赖
 cat > package.json <<'EOF'
 {
@@ -121,6 +123,91 @@ cd /opt/qbot/deploy
 ```
 
 启动内容：`mosquitto`（1883/8083）、`mediamtx`（8554/8889）、`voice-gateway.js`、`server.js`（8080）
+
+#### 应用层服务托管（systemd，推荐）
+
+`mosquitto` 和 `mediamtx` 本来就是 systemd 服务，但**看板和语音网关早期是手工
+`setsid nohup` 起的**，云主机一重启就没了，且进程 PPID=1 不好管理。现在改成
+systemd 单元（单元文件在 `deploy/qbot-dashboard.service`、`deploy/qbot-gateway.service`）：
+
+```bash
+# 在云端执行（脚本会自动把单元里的路径替换成实际 NODE_BIN / APP_DIR）
+cd /opt/qbot/deploy
+./install_cloud_services.sh            # 安装 + 启动 + 设开机自启
+./install_cloud_services.sh --check    # 只看状态
+./install_cloud_services.sh --uninstall
+```
+
+装好之后：
+
+| 命令 | 作用 |
+| --- | --- |
+| `systemctl status qbot-dashboard` | 看板服务状态 |
+| `journalctl -u qbot-gateway -f` | 实时看 ASR/决策日志 |
+| `sudo systemctl restart qbot-gateway` | 改完网关代码后重启 |
+
+`mode2_cloud_side.sh` 会自动识别：装了单元就走 `systemctl restart`，没装才回退到
+手工 `setsid` 启动，两种部署方式都能用。
+
+#### 一键同步看板代码（消除手工 scp 漂移）
+
+以前云端 `/opt/qbot/dashboard` 是靠人工 `scp` 散装拷贝的，仓库改了云端不知道、
+云端临时改的仓库也没有，两边会静默漂移。`deploy/push_cloud_app.sh` 只从
+**git 已跟踪文件**打包，保证云端内容可追溯到某个 commit：
+
+```bash
+# 在 TITAN_V（或任何有仓库 + 能 ssh 到云端的机器）上执行
+./deploy/push_cloud_app.sh              # 打包 → 上传 → 覆盖 → 构建 → 重启
+./deploy/push_cloud_app.sh --dry-run    # 只看会传什么
+./deploy/push_cloud_app.sh --no-build   # 只同步源码，不重新构建前端
+./deploy/push_cloud_app.sh --no-restart # 同步但不重启服务
+```
+
+脚本做的事：
+
+1. `git archive HEAD dashboard/` 打包（**不含** `node_modules`、`dist`、`models`、`voice-clips`）
+2. 云端先备份现有运行时文件到 `/tmp/qbot-app-backup-<ts>.tar.gz`（回滚命令会打印出来）
+3. 覆盖源码后校验 `server.js` / `package.json` / `index.html` 真的到位
+4. `npm install` + `npm run build`，构建后**校验运行时配置链路**（`dist/qbot-config.js`
+   存在、`index.html` 保留引用、bundle 含 `__QBOT_CONFIG__`），任一丢失直接失败
+5. 重启 systemd 服务并打印状态；写入 `.deployed-rev` 标记当前部署版本
+
+需要先能免密登录云端。在 TITAN_V 上用专用密钥（不要复用已有私钥）：
+
+```bash
+ssh-keygen -t ed25519 -N "" -C "qbot-deploy@titan_v" -f ~/.ssh/qbot_cloud
+# 把 ~/.ssh/qbot_cloud.pub 追加到云端的 ~/.ssh/authorized_keys
+cat >> ~/.ssh/config <<'EOF'
+Host qbot-cloud
+    HostName 43.172.91.67
+    User ubuntu
+    IdentityFile ~/.ssh/qbot_cloud
+EOF
+```
+
+#### 弱网相关的内核参数（重启后要保持）
+
+断网恢复速度依赖 `net.ipv4.tcp_syn_retries`：默认 6 时 SYN 重试要 90 s+，
+降到 3 可把恢复压到 25 s 内。写入 `/etc/sysctl.d/99-qbot-weaknet.conf`：
+
+```bash
+# 在机器人侧执行
+echo 'net.ipv4.tcp_syn_retries = 3' | sudo tee /etc/sysctl.d/99-qbot-weaknet.conf
+sudo sysctl -p /etc/sysctl.d/99-qbot-weaknet.conf
+```
+
+> 服务端（云端）不需要改：连接是机器人主动发起的，SYN 重试发生在客户端。
+
+#### 端侧开机自启（可选，默认不启用）
+
+`deploy/qbot-robot.service` 已安装到 `/etc/systemd/system/`，但**默认 `disabled`**——
+开发机上每次开机自动拉起 Gazebo 通常不是想要的。需要时再启用：
+
+```bash
+sudo systemctl enable --now qbot-robot     # 开机自动起模式 2 机器人侧
+sudo systemctl disable --now qbot-robot    # 关掉
+journalctl -u qbot-robot -f                # 看日志
+```
 
 #### 云端资源实测
 

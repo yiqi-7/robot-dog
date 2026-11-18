@@ -74,6 +74,22 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+
+# ---- pipefail 安全的条件判断 ----
+# set -o pipefail 下 `cmd | grep -q` 会因 grep 命中后立即退出、左侧命令继续写管道
+# 而收到 SIGPIPE，整条管道返回 141，导致 if 条件假失败（同一条件时而命中时而不命中）。
+# 统一先把输出收进变量再匹配，彻底避开这个坑。
+listening_on() {          # listening_on <port>：本机是否在监听该 TCP 端口
+  local out
+  out="$(ss -lnt 2>/dev/null || true)"
+  grep -q ":$1 " <<<"$out"
+}
+
+unit_exists() {           # unit_exists <unit-prefix>：是否存在该 systemd 单元
+  local out
+  out="$(systemctl list-unit-files 2>/dev/null || true)"
+  grep -q "^$1" <<<"$out"
+}
 info() { printf '\033[36m[cloud]\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m[cloud]\033[0m %s\n' "$*"; }
 die()  { printf '\033[31m[cloud]\033[0m %s\n' "$*" >&2; exit 1; }
@@ -98,7 +114,7 @@ health_check() {
   done
   for p in "$MQTT_PORT:MQTT" "$WS_PORT:MQTT-WS" "$RTSP_PORT:RTSP" "$WHEP_PORT:WHEP" "$DASH_PORT:看板"; do
     local port="${p%%:*}" name="${p##*:}"
-    if ss -lnt 2>/dev/null | grep -q ":${port} "; then info "${name} :${port} 监听中"; else warn "${name} :${port} 未监听"; bad=1; fi
+    if listening_on "${port}"; then info "${name} :${port} 监听中"; else warn "${name} :${port} 未监听"; bad=1; fi
   done
   # RTSP 是否有推流/拉流连接
   #
@@ -123,7 +139,7 @@ health_check() {
     local_tele=$(timeout 14 mosquitto_sub -h 127.0.0.1 -p "$MQTT_PORT" \
          -t "qbot/v1/robots/robot-01/state" -C 2 -W 12 2>/dev/null || true)
     local_cnt=$(printf '%s' "$local_tele" | grep -c . || true)
-    if [[ "${local_cnt:-0}" -ge 2 ]] && ! printf '%s' "$local_tele" | tail -1 | grep -q '"offline"'; then
+    if [[ "${local_cnt:-0}" -ge 2 ]] && [[ "$(printf '%s' "$local_tele" | tail -1)" != *'"offline"'* ]]; then
       info "收到机器人实时遥测（robot-01/state，连续 2 帧）"
     elif [[ "${local_cnt:-0}" -ge 1 ]]; then
       warn "只收到 1 条遥测（疑似 retained 的遗嘱/陈旧快照），机器人可能未在线"
@@ -156,7 +172,7 @@ wait_port "$MQTT_PORT" "MQTT" || die "MQTT 未就绪"
 wait_port "$WS_PORT" "MQTT-WebSocket" || warn "WebSocket 未监听，看板将无法连接"
 
 # 2) MediaMTX
-if [[ -x /usr/local/bin/mediamtx ]] || systemctl list-unit-files 2>/dev/null | grep -q '^mediamtx'; then
+if [[ -x /usr/local/bin/mediamtx ]] || unit_exists 'mediamtx'; then
   if ! systemctl is-active --quiet mediamtx; then
     info "启动 mediamtx…"
     sudo systemctl start mediamtx || warn "mediamtx 启动失败"
@@ -190,7 +206,13 @@ fi
 
 # 4) 看板页面
 if [[ "$NO_DASH" -eq 0 ]]; then
-  if ss -lnt 2>/dev/null | grep -q ":${DASH_PORT} "; then
+  # 装了 systemd 单元（deploy/qbot-*.service）就交给 systemd，崩溃/重启自动恢复；
+  # 没装则回退到下面的手工 setsid 启动。
+  if unit_exists "qbot-dashboard.service"; then
+    info "看板由 systemd 管理（qbot-dashboard.service）"
+    sudo systemctl restart qbot-dashboard || die "qbot-dashboard 启动失败，见 journalctl -u qbot-dashboard"
+    wait_port "$DASH_PORT" "看板" 25 || die "看板未在 ${DASH_PORT} 监听，见 journalctl -u qbot-dashboard"
+  elif listening_on "${DASH_PORT}"; then
     info "看板已在 :${DASH_PORT} 运行"
   else
     info "启动看板 (${DASH_PORT})…"
@@ -202,6 +224,17 @@ fi
 
 # 5) 语音网关
 if [[ "$NO_GW" -eq 0 ]]; then
+  if unit_exists "qbot-gateway.service"; then
+    info "语音网关由 systemd 管理（qbot-gateway.service）"
+    # SenseVoice 模型加载要 1-2 秒，重启后给足时间再判定
+    sudo systemctl restart qbot-gateway || die "qbot-gateway 启动失败，见 journalctl -u qbot-gateway"
+    sleep 6
+    if systemctl is-active --quiet qbot-gateway; then
+      info "语音网关运行中（journalctl -u qbot-gateway 查看日志）"
+    else
+      warn "语音网关未运行，见 journalctl -u qbot-gateway"
+    fi
+  else
   if pgrep -f "voice-gateway\.j[s]" >/dev/null 2>&1; then
     info "重启语音网关…"
     pkill -f "voice-gateway\.j[s]" 2>/dev/null || true
@@ -214,6 +247,7 @@ if [[ "$NO_GW" -eq 0 ]]; then
       "$NODE_BIN" voice-gateway.js >"$LOG_GW" 2>&1 & )
   sleep 5
   grep -q "已连接" "$LOG_GW" 2>/dev/null && info "语音网关已连上 MQTT" || warn "语音网关未连上，见 $LOG_GW"
+  fi
 fi
 
 sleep 2

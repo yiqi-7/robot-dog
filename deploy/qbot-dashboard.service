@@ -1,0 +1,30 @@
+[Unit]
+Description=qbot dashboard (静态页面 + MQTT 代理配置)
+Documentation=file:///opt/qbot/deploy/README-DEPLOY.md
+After=network-online.target mosquitto.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/qbot/dashboard
+Environment=PORT=8080
+Environment=NODE_ENV=production
+# node 装在 /opt/qbot/node 而不是系统 PATH，必须写绝对路径
+ExecStart=/opt/qbot/node/bin/node server.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=qbot-dashboard
+
+# 轻量加固：只允许写自己的目录（语音片段、运行时配置）
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/opt/qbot/dashboard
+
+[Install]
+WantedBy=multi-user.target

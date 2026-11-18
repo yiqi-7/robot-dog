@@ -1,13 +1,18 @@
 # -*- coding: utf-8 -*-
 """S6 单独复验：确认机器人真的在走 → 杀执行端 → 看门狗必须停车。"""
 import json
+import os
 import re
 import subprocess
 import time
 
-WS = "/run/media/wby/shuju/Document/robot-dog"
+# 工作区路径：优先取环境变量，便于换机器/换盘符时不改代码
+WS = os.environ.get("QBOT_WS", "/run/media/wby/shuju/Document/robot-dog")
+# FastDDS 的 UDP profile 随用户家目录变化，不再写死 /home/wby
+FASTDDS = os.environ.get("FASTRTPS_PROFILE",
+                         os.path.expanduser("~/fastdds_udp.xml"))
 ENV = ("cd %s && source /opt/ros/lyrical/setup.bash && source install/setup.bash && "
-       "export FASTRTPS_DEFAULT_PROFILES_FILE=/home/wby/fastdds_udp.xml" % WS)
+       "export FASTRTPS_DEFAULT_PROFILES_FILE=%s" % FASTDDS)
 P, RID, LOG = "qbot/v1", "robot-01", "/tmp/sim_p6.log"
 
 

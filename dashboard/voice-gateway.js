@@ -294,6 +294,20 @@ function parseWithRules(text, now) {
 }
 
 /* ---------------- 任务构建与校验 ---------------- */
+/**
+ * 分配任务 ID。
+ *
+ * 不能简单用 max(tasks)+1：看板前端（src/providers/trpc.tsx）也会用同样的
+ * 方式自己造任务，两个生产者各自算就会撞号。这里先取 max+1，再跳过已被
+ * 占用的号，保证在"网关 + 看板"双写场景下不重复。
+ */
+function allocTaskId(list) {
+  const used = new Set(list.map((t) => t.id));
+  let id = list.reduce((m, t) => Math.max(m, Number(t.id) || 0), 0) + 1;
+  while (used.has(id)) id += 1;
+  return id;
+}
+
 function buildTask(parsed, text, now) {
   if (!parsed.type || !TASK_TYPES.includes(parsed.type)) return { err: "无法识别任务类别（移动/巡检/充电）" };
   let target = parsed.target ?? null;
@@ -362,7 +376,7 @@ function acceptCommand(cmd) {
     raiseEvent("critical", `语音急停：${cmd.robotId ?? cmd.heardBy}（「${cmd.transcript}」）`);
     return;
   }
-  const id = tasks.reduce((m, t) => Math.max(m, t.id), 0) + 1;
+  const id = allocTaskId(tasks);
   const task = {
     id,
     title: cmd.parsed.title,
@@ -446,6 +460,7 @@ async function handleTranscript({ text, heardBy, source, cmdId, audioFile = null
   if (parsed.robot && robots.has(parsed.robot)) cmd.robotId = parsed.robot;
   const { parsed: built, err } = buildTask(parsed, text, now);
   if (err) {
+    console.warn(`[gateway] 指令解析失败：「${text}」→ ${err}`);
     cmd.status = "failed";
     cmd.reason = err;
     upsertCommand(cmd);

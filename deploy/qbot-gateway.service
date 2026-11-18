@@ -1,0 +1,32 @@
+[Unit]
+Description=qbot voice gateway (ASR + 语音指令 -> 任务)
+Documentation=file:///opt/qbot/deploy/README-DEPLOY.md
+After=network-online.target mosquitto.service qbot-dashboard.service
+Wants=network-online.target
+# 网关要连本地 broker 收发语音指令
+Requires=mosquitto.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/qbot/dashboard
+Environment=MQTT_URL=mqtt://127.0.0.1:1883
+Environment=NODE_ENV=production
+# SenseVoice 模型常驻内存约 400MB，给足启动时间，别被 systemd 提前判死
+TimeoutStartSec=120
+ExecStart=/opt/qbot/node/bin/node voice-gateway.js
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=qbot-gateway
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/opt/qbot/dashboard
+
+[Install]
+WantedBy=multi-user.target

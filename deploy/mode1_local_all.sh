@@ -83,6 +83,16 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ---------------------------- 工具函数 ----------------------------
+# ---- pipefail 安全的条件判断 ----
+# set -o pipefail 下 `cmd | grep -q` 会因 grep 命中后立即退出、左侧命令继续写管道
+# 而收到 SIGPIPE，整条管道返回 141，导致 if 条件假失败（同一条件时而命中时而不命中）。
+# 统一先把输出收进变量再匹配，彻底避开这个坑。
+listening_on() {          # listening_on <port>：本机是否在监听该 TCP 端口
+  local out
+  out="$(ss -lnt 2>/dev/null || true)"
+  grep -q ":$1 " <<<"$out"
+}
+
 info() { printf '\033[36m[mode1]\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m[mode1]\033[0m %s\n' "$*"; }
 die()  { printf '\033[31m[mode1]\033[0m %s\n' "$*" >&2; exit 1; }
@@ -197,7 +207,7 @@ fi
 
 # ---------------------------- 启动看板 ----------------------------
 if [[ "$NO_DASH" -eq 0 ]]; then
-  if ss -lnt 2>/dev/null | grep -q ":${DASH_PORT} "; then
+  if listening_on "${DASH_PORT}"; then
     info "看板已在 :${DASH_PORT} 运行，跳过"
   else
     info "启动看板页面 (${DASH_PORT})…"

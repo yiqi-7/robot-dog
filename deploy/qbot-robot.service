@@ -1,0 +1,26 @@
+[Unit]
+Description=qbot robot side (ROS 2 + Gazebo + MQTT bridge, mode 2)
+Documentation=file:///run/media/wby/shuju/Document/robot-dog/deploy/README-DEPLOY.md
+# Gazebo 要等图形栈与网络就绪，否则仿真起不来
+After=network-online.target graphical.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+User=wby
+Group=wby
+WorkingDirectory=/run/media/wby/shuju/Document/robot-dog
+# mode2_robot_side.sh 内部用 setsid nohup 把 ros2 launch 放到后台，自身很快返回，
+# 所以用 Type=forking + 不追踪 PID，靠脚本自己的自检来判定成败。
+Environment=QBOT_SERVICE=1
+ExecStart=/run/media/wby/shuju/Document/robot-dog/deploy/mode2_robot_side.sh --wait 150
+ExecStop=/run/media/wby/shuju/Document/robot-dog/deploy/stop_all.sh robot
+TimeoutStartSec=300
+RemainAfterExit=yes
+Restart=no
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=qbot-robot
+
+[Install]
+WantedBy=multi-user.target

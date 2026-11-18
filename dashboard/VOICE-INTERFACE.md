@@ -155,8 +155,12 @@ QoS 1，非 retained。机器人收到后本地合成播报即可：
 无麦克风/ASR 时联调用，payload 最小只要 `text` 字段：
 
 ```bash
-# 文本注入方式直接发到 robots/<id>/voice/text（见 deploy/README-DEPLOY.md）
-mosquitto_pub -h 127.0.0.1 -t "qbot/v1/robots/robot-01/voice/text" -m "让哨兵去充电"
+# 主题是 {P}/voice/text（不是 robots/<id>/voice/text），payload 必须是 JSON
+mosquitto_pub -h 127.0.0.1 -t "qbot/v1/voice/text" \
+  -m '{"text":"让哨兵去充电","robotId":"robot-01"}'
+
+# 看结果：命令回执发布在 {P}/voice/commands
+mosquitto_sub -h 127.0.0.1 -t "qbot/v1/voice/commands" -C 1
 ```
 
 ## 8. 语音网关部署
