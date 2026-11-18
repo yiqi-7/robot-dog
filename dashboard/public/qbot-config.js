@@ -32,5 +32,7 @@ window.__QBOT_CONFIG__ = {
   streaming: {
     // 云端 MediaMTX（WHEP 拉流）；本机自测时改成 "" 回退到页面主机名
     whepBase: "http://43.172.91.67:8889",
+    // 公网/NAT 场景加 STUN 提升建连成功率；局域网可留空数组
+    iceServers: ["stun:stun.l.google.com:19302"],
   },
 }

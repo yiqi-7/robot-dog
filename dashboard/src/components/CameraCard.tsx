@@ -34,11 +34,17 @@ function Corner({ className }: { className: string }) {
 export function CameraCard({ robot, className }: { robot: Robot; className?: string }) {
   const { now, frames } = useSim();
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  // 占位机器人（id 为 "--"，等待真实遥测接入）没有对应的流路径，
+  // 不能去拉 cam/--/whep —— 云端 MediaMTX 会报 "path 'cam/--' is not configured"
+  // 并让看板陷入每 retryMs 一次的无谓重试。此时传 null，Hook 直接置为 offline。
   const whepUrl = useMemo(
-    () => `${STREAMING.whepBase}/${STREAMING.camStreamPath(robot.id)}/whep`,
+    () =>
+      robot.id && robot.id !== "--"
+        ? `${STREAMING.whepBase}/${STREAMING.camStreamPath(robot.id)}/whep`
+        : null,
     [robot.id],
   );
-  const whepState = useWhep(whepUrl, videoRef, STREAMING.retryMs);
+  const whepState = useWhep(whepUrl, videoRef, STREAMING.retryMs, STREAMING.iceServers);
 
   const ts = now.toLocaleTimeString("zh-CN", { hour12: false });
   const frame = frames[robot.id];

@@ -19,6 +19,8 @@ type RuntimeOverride = {
   }
   streaming?: {
     whepBase?: string
+    /** ICE 服务器列表，如 ["stun:stun.l.google.com:19302"]；局域网可留空 */
+    iceServers?: string[]
   }
 }
 
@@ -92,4 +94,9 @@ export const STREAMING = {
   camStreamPath: (robotId: string) => `cam/${robotId}`,
   /** 无流 / 断流时的重试间隔 ms */
   retryMs: 5000,
+  /**
+   * ICE 服务器。局域网直连（看板与 MediaMTX 同机/同网段）留空即可，
+   * 走公网中转时建议配置 STUN，帮助 NAT 打洞（否则只能靠 host/prflx 候选，建连不稳）。
+   */
+  iceServers: (runtime?.streaming?.iceServers ?? []) as string[],
 }

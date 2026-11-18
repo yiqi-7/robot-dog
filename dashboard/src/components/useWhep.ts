@@ -4,16 +4,18 @@ import type { RefObject } from "react";
 export type WhepState = "connecting" | "live" | "offline";
 
 /**
- * WHEP 拉流 Hook（MediaMTX WebRTC，纯局域网无 STUN）。
+ * WHEP 拉流 Hook（MediaMTX WebRTC）。
  *
  * - url 指向 `http://<host>:8889/<path>/whep`；无人推流时 MediaMTX 返回 404，按 retryMs 自动重试
  * - 断流（connectionState failed）后同样自动重试
  * - 组件卸载 / url 变化时关闭旧连接
+ * - iceServers 传入 STUN 地址可提升公网/NAT 场景的建连成功率；局域网留空即可
  */
 export function useWhep(
   url: string | null,
   videoRef: RefObject<HTMLVideoElement | null>,
   retryMs = 5000,
+  iceServers: string[] = [],
 ): WhepState {
   const [state, setState] = useState<WhepState>("offline");
 
@@ -49,7 +51,9 @@ export function useWhep(
       if (stopped) return;
       setState("connecting");
       try {
-        pc = new RTCPeerConnection({ iceServers: [] });
+        pc = new RTCPeerConnection({
+          iceServers: iceServers.map((u) => ({ urls: u })),
+        });
         pc.addTransceiver("video", { direction: "recvonly" });
         pc.addTransceiver("audio", { direction: "recvonly" });
 
