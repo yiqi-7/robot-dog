@@ -3,7 +3,7 @@
 机器人与看板（云端）之间的全部连接都在这个包里。**真机与仿真机都要装**，它不依赖
 Gazebo（对比：`quadruped_sim` 只在仿真机上装）。
 
-## 三个节点（单一职责，各自独立连 broker）
+## 四个节点（单一职责，各自独立连 broker）
 
 原来是一个进程 `mqtt_bridge` 干完遥测 + 任务 + 语音三件事。现在按职责拆成三个
 节点，**MQTT 主题、报文字段、参数名全部不变**，网关/看板无感：
@@ -13,6 +13,7 @@ Gazebo（对比：`quadruped_sim` 只在仿真机上装）。
 | `mqtt_bridge` | 遥测上行（1 Hz state）、电量/温度告警、站点地图 | 无（只写不读） | `state`、`event`、`site/map` | ✅ **独占** |
 | `task_runner` | cmd 下行分发（estop/resume/assign/cancel）、Nav2 导航、任务回写、急停 | `cmd`、`fleet/tasks` | `fleet/tasks`（回写）、`event` | ❌ |
 | `voice_link` | §3.1 音频上行（base64）、§3.2 TTS 播报队列 | `robots/{id}/tts` | `robots/{id}/audio` | ❌ |
+| `deadman_guard` | 心跳看门狗：心跳超时切速度链路并持续发零速（底盘层最后手段） | `safety/heartbeat`（ROS 话题） | 无 | ❌ |
 
 约定（改代码前先看这三条）：
 
@@ -23,7 +24,7 @@ Gazebo（对比：`quadruped_sim` 只在仿真机上装）。
    急停/导航失败/任务完成（level=info 也照发）。两边共用 `alarm_base_id` 基址、
    号段错开（`task_runner` 偏移 10 万），`alarmId` 不会撞号；看板侧不需要区分来源
    （报文里的 `source` 字段仍是机器人名）。
-3. 三个节点各自 `mosquitto_new`，**客户端 ID 必须不同**：
+3. 四个节点各自 `mosquitto_new`，**客户端 ID 必须不同**：
    `robot_id`（遥测）/ `robot_id + "-task"` / `robot_id + "-voice"`。
    同一个 ID 的两个连接会被 Broker 互相顶掉，表现为"遥测时有时无、指令偶发收不到"。
 
@@ -61,7 +62,7 @@ scripts/ptt.sh            按键说话脚本（回车开录 / 再回车收尾上
 
 | 参数 | 归属节点 |
 | --- | --- |
-| `broker_host` / `broker_port` / `topic_prefix` / `robot_id` / `robot_name` / `keepalive` / `username` / `password` | 三个节点都有（连接与身份） |
+| `broker_host` / `broker_port` / `topic_prefix` / `robot_id` / `robot_name` / `keepalive` / `username` / `password` | 四个节点都有（连接与身份） |
 | `publish_hz` / `battery_init` / `battery_warn` / `battery_crit` / `motor_temp_warn` / `motor_temp_crit` / `alarm_base_id` / `site_scale` / `site_offset_x` / `site_offset_y` / `site_world_width` / `site_world_height` / `publish_site_map` / `robot_model` | `mqtt_bridge` |
 | `nav_speed` / `nav_tolerance` / `nav_timeout` / `alarm_base_id` | `task_runner` |
 | `voice_enabled` / `audio_topic` / `audio_sample_rate` / `audio_channels` / `piper_bin` / `piper_model` | `voice_link` |
@@ -76,7 +77,7 @@ scripts/ptt.sh            按键说话脚本（回车开录 / 再回车收尾上
 | 调整任务状态回写规则 | `task_runner_tasks.cpp` 的 `writeBackTask()` / `finishTask()` |
 | 改看板坐标缩放 / 世界尺寸 | `mqtt_bridge` 参数 `site_*` + `mqtt_bridge_node.hpp` 的换算公式 |
 | 增删站点 / 改点位坐标 | `site_map.hpp`（一处改，看板地图与导航目标同步生效） |
-| 语音协议字段变化 | `voice_link_node.cpp`（上行）与 `quadruped-ops/VOICE-INTERFACE.md` 同步 |
+| 语音协议字段变化 | `voice_link_node.cpp`（上行）与 `dashboard/VOICE-INTERFACE.md` 同步 |
 | 换 TTS 引擎（piper 之外） | `voice_link_node.cpp` 的 `ttsWorker()` |
 | 把任务状态接到别的消费方 | 订阅 `task_runner/state`（latched JSON） |
 
@@ -96,8 +97,8 @@ sudo apt install libmosquitto-dev nlohmann-json3-dev libopencv-dev
 
 ## 协议
 
-见 `quadruped-ops/MQTT-INTERFACE.md`（连接/主题/编码）与
-`quadruped-ops/VOICE-INTERFACE.md`（语音 §3.1 上行 / §3.2 播报 / §5 确认）。
+见 `dashboard/MQTT-INTERFACE.md`（连接/主题/编码）与
+`dashboard/VOICE-INTERFACE.md`（语音 §3.1 上行 / §3.2 播报 / §5 确认）。
 
 ## 执行安全（watchdog / 门禁）
 
