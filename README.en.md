@@ -39,20 +39,62 @@ The project supports two topologies — **run everything on one machine first, t
 | ROS 2 | TITAN_V | TITAN_V |
 | MQTT + video relay + voice gateway + dashboard | all on TITAN_V | Tencent Cloud `43.172.91.67` |
 
+> ### ⚠️ Read this before deploying to your own environment
+>
+> Every `43.172.91.67` in this repository is **the author's own Tencent Cloud test box**, not a
+> public service. Copying it verbatim makes your deployment talk to somebody else's server
+> (and push your robot's camera feed there).
+> **When deploying to your own environment, replace all of these addresses with your own
+> server IP / domain name.**
+>
+> Replacement checklist (`<YOUR_IP>` = your own server address):
+>
+> | Where | Variable / parameter | How to change it |
+> |---|---|---|
+> | `deploy/switch_config.sh` | `CLOUD_HOST` (default `43.172.91.67`) | Edit the default, or override: `CLOUD_HOST=<YOUR_IP> ./switch_config.sh cloud` |
+> | `dashboard/public/qbot-config.js` | `mqtt.brokerUrl`, `streaming.whepBase` | Dashboard **runtime** config — edit and refresh the browser (no rebuild needed) |
+> | `deploy/mediamtx.yml` | `webrtcAdditionalHosts` | Must be your public IP, otherwise browser WHEP cannot connect |
+> | `deploy/mode2_robot_side.sh` | `--host <YOUR_IP>` | Robot-side argument (also change the default inside the script) |
+> | `deploy/mode2_cloud_side.sh`, `deploy/push_cloud_app.sh` | cloud address / ssh target | Defaults inside the scripts |
+> | `src/quadruped_sim/launch/quadruped_gz.launch.py` | `broker_host`, `rtsp_server` | `broker_host:=<YOUR_IP>` works as a launch argument; `rtsp_server` is hard-coded, edit the file |
+> | `src/quadruped_mqtt_bridge/src/image_sender.cpp` | RTSP push address default | Edit the source default |
+> | Docs (`README*.md`, `deploy/*.md`, `dashboard/VIDEO-LINK.md`) | IPs in example commands | Examples only |
+>
+> **Mode 1 (single machine) needs no public address at all** — `./deploy/switch_config.sh local`
+> points the dashboard at `127.0.0.1`.
+
 ```bash
-cd deploy
+# Run from the repository root (the scripts derive the workspace path themselves)
 
 # Mode 1: everything on one machine
-./switch_config.sh local && ./mode1_local_all.sh
+./deploy/switch_config.sh local && ./deploy/mode1_local_all.sh
 
 # Mode 2: cloud
-./mode2_cloud_side.sh                       # on 43.172.91.67
-./mode2_robot_side.sh --host 43.172.91.67   # on TITAN_V
+./deploy/mode2_cloud_side.sh                       # on 43.172.91.67 (use your own cloud)
+./deploy/mode2_robot_side.sh --host 43.172.91.67   # on TITAN_V (use your own cloud)
 
-./stop_all.sh local|cloud|robot|all
+# Stop: pick ONE of local / cloud / robot / all.
+# Do not copy `local|cloud|robot|all` literally — in a shell `|` is a pipe.
+./deploy/stop_all.sh local
 ```
 
 See **[deploy/README-DEPLOY.md](deploy/README-DEPLOY.md)** for the full runbook.
+
+---
+
+## Requirements
+
+Minimum usable setup (numbers taken from the "measured cloud resources" table in
+[deploy/README-DEPLOY.md](deploy/README-DEPLOY.md)):
+
+| Item | Requirement | Basis / notes |
+|---|---|---|
+| OS | **Ubuntu 26.04 LTS** (the release matching ROS 2 **Lyrical**) | Developed and measured on 26.04 + `/opt/ros/lyrical` |
+| ROS 2 | Lyrical + Gazebo `gz sim 10` | See "Dependencies" below |
+| RAM | **8 GB+** recommended | The cloud relay alone (no Gazebo) measured **1967 MB** total: `voice-gateway` RSS ~400 MB after ASR load, ~800 MB system headroom. Running the simulation locally needs more |
+| Disk | **10 GB+ free** recommended | Cloud side measured `/opt/qbot` at ~280 MB (model 229 MB + `node_modules` 45 MB + `dist` 6 MB); locally you also need room for ROS 2 / Gazebo plus `build/`, `install/`, `quadruped-ops/` |
+| ASR model | ~**290 MB**, not tracked | `model.int8.onnx` ~229 MB + `tokens.txt` ~309 KB; the model directory including sample audio is ~290 MB. Missing model only disables the voice channel |
+| Network | Mode 1 needs no internet; Mode 2 needs TCP `1883/8083/8554/8889/8080` + UDP `8189` open | Port table in [deploy/README-DEPLOY.md](deploy/README-DEPLOY.md) |
 
 ---
 
@@ -73,6 +115,7 @@ sudo apt install libopencv-dev ffmpeg
 ### Build
 
 ```bash
+source /opt/ros/lyrical/setup.bash   # required on a fresh machine, otherwise colcon cannot find ROS 2 deps
 cd <project root>              # later commands use $(pwd), so run from the root
 colcon build --symlink-install
 source install/setup.bash
@@ -173,7 +216,7 @@ Details: **[dashboard/VIDEO-LINK.md](dashboard/VIDEO-LINK.md)**.
 | Metric | Result |
 |---|---|
 | Trot gait speed | 0.35 m/s (ground truth from `/odom`) |
-| Telemetry rate | 1 Hz, ~0.2 KB per frame |
+| Telemetry rate | **1 Hz** (`publish_hz` defaults to `1.0` in `src/quadruped_mqtt_bridge/src/node_core.cpp`), ~0.2 KB per frame |
 | Camera fallback frame | 640×360, q90, ~17.7 KB, 1 fps |
 | Voice compression | 3.6 s: 112 KB PCM → 5 KB Opus → 7 KB base64 |
 | Cloud relay RTT | 851–1590 ms (mean 1192 ms, jitter ±304 ms) |
@@ -238,10 +281,15 @@ The old `factory_full` map had 18.7% unknown space, concentrated on the east sid
 points — (5.0,-6.0), (7.0,-5.5), (8.0,-5.5) — failing every plan. The rescan was done in two steps:
 
 1. **Temporarily switch to SLAM mode** (launch without `map:=`) and run an automatic
-   plan-then-follow loop (34 target points, route generated by `tools/make_rescan_route.py`).
-   Each point is pre-validated with `ComputePathToPose`; on failure or abort it does one unstuck
-   maneuver plus one retry before skipping. Bypassing `bt_navigator` and talking to the
-   planner/controller directly avoids behaviour-tree activation failures under load.
+   plan-then-follow loop (34 target points; the route is generated by
+   `tools/make_rescan_route.py`, which reads `maps/factory_full.pgm` and picks the edges of
+   the unknown regions). Each point is pre-validated with `ComputePathToPose`; on failure or
+   abort it does one unstuck maneuver plus one retry before skipping. Bypassing `bt_navigator`
+   and talking to the planner/controller directly avoids behaviour-tree activation failures
+   under load.
+   Note: the loop driver itself was a throwaway script (historically `/tmp/rescan_driver.py`,
+   **not tracked in this repo**, gone after a reboot); what the repo keeps is the reproducible
+   route generator `tools/make_rescan_route.py`.
 
 2. **Conservative merge** of the new and old maps: everything already known in the old map is
    kept; in unknown regions only cells the new map confirms as **free** are absorbed —
@@ -257,6 +305,8 @@ points — (5.0,-6.0), (7.0,-5.5), (8.0,-5.5) — failing every plan. The rescan
 | Occupied | 5.6% | 5.6% (no new obstacles) |
 | Unknown | 18.7% | **9.4%** |
 | Unknown in east warehouse | 39.4% | **24.5%** |
+| Unknown in 1 m² around (8.0,-5.5) | 76.2% | **13.8%** |
+| Unknown in 1 m² around (7.0,-5.5) | 45.1% | **17.7%** |
 
 **Unintended but valuable finding**: (7.0,-5.5) and (8.0,-5.5) turned out to be **the shelf bodies
 themselves**. They were unknown in the old map, and `track_unknown_space: false` treated unknown
@@ -280,6 +330,7 @@ floor": the planner no longer routes through shelving.
 | [dashboard/VOICE-INTERFACE.md](dashboard/VOICE-INTERFACE.md) | Voice contract (uplink / downlink / confirmation policy) |
 | [tools/weaknet/README.md](tools/weaknet/README.md) | Network impairment injection and matrix testing |
 | [deploy/mediamtx-install.md](deploy/mediamtx-install.md) | MediaMTX installation and configuration |
+| [LICENSE](LICENSE) / [NOTICE](NOTICE) | License (MIT) and third-party attribution |
 
 ---
 
@@ -293,7 +344,30 @@ floor": the planner no longer routes through shelving.
 
 ---
 
-## License
+## License and acknowledgements
 
-Project code for learning and engineering practice. `src/champ/` is a vendored upstream
-project (BSD-3-Clause); `dashboard/` is the companion operations dashboard.
+- **This project** (the code and docs owned by this repository, including `dashboard/`, `deploy/`
+  and `src/quadruped_*`) is released under the **MIT** license — full text in [LICENSE](LICENSE)
+  (year 2026, copyright `yiqi-7`).
+  > If this conflicts with a course or competition requirement, **the course/competition
+  > requirement wins**.
+- **`src/champ/`** is a vendored copy of upstream **CHAMP**, governed by its own
+  **BSD-3-Clause** license (see
+  [src/champ/champ/include/champ/LICENSE](src/champ/champ/include/champ/LICENSE)). This project
+  only adds adaptation patches on top (`quadruped_champ_config`, interface glue) and does not
+  change the upstream terms.
+- **Third-party components** (runtime dependencies, sources unmodified):
+
+  | Component | Used for | License |
+  |---|---|---|
+  | [CHAMP](https://github.com/chvmp/champ) | Quadruped locomotion controller (`src/champ/`, vendored) | BSD-3-Clause |
+  | [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) + SenseVoice model | Speech recognition (ASR) | Apache-2.0 |
+  | [MediaMTX](https://github.com/bluenviron/mediamtx) | RTSP → WebRTC video relay | MIT |
+  | [Eclipse Mosquitto](https://mosquitto.org/) | MQTT broker | EPL-2.0 |
+  | [Gazebo / gz-sim](https://gazebosim.org/) | Simulation | Apache-2.0 |
+  | [ROS 2](https://docs.ros.org/) / [Nav2](https://nav2.ros.org/) / [SLAM Toolbox](https://github.com/SteveMacenski/slam_toolbox) | Middleware, navigation, mapping | Apache-2.0 / see each upstream repo |
+  | [React](https://react.dev/) / [Vite](https://vite.dev/) / [mqtt.js](https://github.com/mqttjs/MQTT.js) / [Recharts](https://recharts.org/) | Dashboard front end | MIT |
+
+  All component copyrights belong to their respective authors. Model weights (SenseVoice, piper)
+  follow their own release terms and are **not tracked** (see `.gitignore`). See [NOTICE](NOTICE)
+  for details.

@@ -12,6 +12,9 @@
 | 看板页面 | TITAN_V:8080 | 云端:8080 |
 | 浏览器访问 | `http://<TITAN_V-IP>:8080` | `http://43.172.91.67:8080` |
 
+> ⚠️ **本文件里出现的 `43.172.91.67` 是作者自己的腾讯云测试机**，不是公共服务。
+> 部署到你自己的环境时请全部替换（替换点清单见下文「模式 2」开头的表格）。
+
 ---
 
 ## 模式 1：本地全栈（TITAN_V 单机）
@@ -23,8 +26,8 @@ cd /run/media/wby/shuju/Document/robot-dog/deploy
 ./mode1_local_all.sh            # 一条命令起全部
 ```
 
-> **前提**：模式 1 需要本地运行副本 `quadruped-ops/`（含 `node_modules/`、`dist/`、
-> `models/sensevoice/`）。它**不入库**（见根 README「项目结构」），全新 clone 后
+> **前提 1：备好本地运行副本 `quadruped-ops/`**（含 `node_modules/`、`dist/`、`models/sensevoice/`）。
+> 它**不入库**（见根 README「项目结构」），全新 clone 后
 > 必须先备好，否则 `mode1_local_all.sh` 会在前置检查处直接退出。
 >
 > ```bash
@@ -34,9 +37,37 @@ cd /run/media/wby/shuju/Document/robot-dog/deploy
 > # 再把 ASR 模型放到 models/sensevoice/（model.int8.onnx + tokens.txt）
 > ```
 
+> **前提 2：mosquitto 必须同时监听 1883（TCP）和 8083（WebSocket）**。
+> `apt install mosquitto` 只开 TCP 1883，而**看板走 `ws://<host>:8083/mqtt`**——
+> 不装这份 WebSocket 配置，看板会一直显示"离线"，且日志里看不出原因。
+> 把仓库里的配置装进 `conf.d/` 并重启：
+>
+> ```bash
+> # 在 TITAN_V 上（仓库根目录执行）
+> sudo cp deploy/mosquitto-websockets.conf /etc/mosquitto/conf.d/websockets.conf
+> sudo systemctl restart mosquitto
+>
+> # 验证：应该看到 1883 与 8083 两个监听
+> ss -lntp | grep -E '1883|8083'
+> ```
+>
+> 配置文件内容（`deploy/mosquitto-websockets.conf`，共 4 行）：
+>
+> ```
+> listener 1883
+> listener 8083
+> protocol websockets
+> allow_anonymous true
+> ```
+>
+> 说明：
+> - `allow_anonymous true` 只适合内网 / 演示；公网部署必须加账号密码（见根 README「已知限制」）。
+> - 改完用 `sudo systemctl restart mosquitto`（`reload` 对 `listener` 变更无效）。
+> - 端口不通先查防火墙：`sudo ufw status`，或云主机安全组（TCP 8083）。
+
 启动内容（按顺序）：
 
-1. `mosquitto`（systemd，监听 1883 + 8083 WebSocket）
+1. `mosquitto`（systemd，监听 1883 + 8083 WebSocket；8083 需要「前提 2」那份配置）
 2. 看板 `server.js`（8080，从 `quadruped-ops/dist/` 提供静态文件）
 3. 语音网关 `voice-gateway.js`（`MQTT_URL=mqtt://127.0.0.1:1883`）
 4. ROS2 仿真 + 四个 MQTT 节点（`broker_host:=127.0.0.1`）
@@ -71,6 +102,23 @@ sudo systemctl enable --now mediamtx   # 或手工 /usr/local/bin/mediamtx /etc/
 ---
 
 ## 模式 2：云端分离（生产 / 远程控制）
+
+> ### ⚠️ 先替换地址：`43.172.91.67` 是作者的测试服务器
+>
+> 下面所有命令里的 `43.172.91.67` 都是**作者自己的腾讯云机器**。换成你自己的服务器
+> （`<你的IP>`）之后再执行，否则你的机器人会把遥测和视频推给别人的服务器。
+>
+> | 替换点 | 变量 / 参数 | 说明 |
+> |---|---|---|
+> | `deploy/switch_config.sh` | `CLOUD_HOST`（默认 `43.172.91.67`） | 也可一次性覆盖：`CLOUD_HOST=<你的IP> ./switch_config.sh cloud` |
+> | `deploy/mode2_cloud_side.sh` | 云端本机地址 / 端口 | 云端一侧执行，一般无需改 |
+> | `deploy/mode2_robot_side.sh` | `--host <你的IP>`、脚本内默认 `HOST` | 端侧连云端 |
+> | `deploy/push_cloud_app.sh` | `CLOUD_HOST` / ssh 目标（默认 `ubuntu@43.172.91.67`） | 一键同步看板代码 |
+> | `deploy/mediamtx.yml` | `webrtcAdditionalHosts` | 必须填公网 IP，否则 WHEP 拉流失败 |
+> | `dashboard/public/qbot-config.js` | `mqtt.brokerUrl`、`streaming.whepBase` | 看板运行时配置（`switch_config.sh` 会改写它） |
+> | `src/quadruped_sim/launch/quadruped_gz.launch.py` | `broker_host`、`rtsp_server` | `broker_host` 可用 launch 参数传；`rtsp_server` 写死，由脚本 `sed` 临时改 |
+> | `src/quadruped_mqtt_bridge/src/image_sender.cpp` | RTSP 推流地址默认值 | 直接改源码 |
+> | 下文验证命令（`ffprobe` / `curl` / `ssh`） | 命令里的 IP | 换成你的 |
 
 ### ① 云端一侧（腾讯云 43.172.91.67）
 
@@ -303,7 +351,7 @@ curl -s -o /dev/null -w 'HTTP %{http_code}\n' -X POST \
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| 看板一直"机器人离线" | 浏览器连的 broker 地址不对 | `./switch_config.sh show` 确认；改完刷新浏览器（无需重启） |
+| 看板一直显示离线（F12 里 WebSocket 连不上） | ① mosquitto 没监听 8083；② 浏览器连的 broker 地址不对 | 先查 ①：`ss -lntp \| grep 8083`，没有输出就把 `deploy/mosquitto-websockets.conf` 装到 `/etc/mosquitto/conf.d/websockets.conf` 并 `sudo systemctl restart mosquitto`；再查 ②：`./switch_config.sh show`；改完刷新浏览器（无需重启） |
 | 看板显示"等待 RTSP 推流" | 推流没到 / 路径没配 | 云端 `journalctl -u mediamtx \| grep publishing`；确认 `paths` 有 `all_others` |
 | 视频卡片报 `path 'cam/--' is not configured` | 占位机器人也在拉流 | 已修（`CameraCard` 跳过 `id === "--"`），确认用的是新构建 |
 | 模式 1 没有视频只有快照 | 本机没装 MediaMTX | 见上文"模式 1 的视频说明"，属预期行为 |

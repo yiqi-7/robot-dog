@@ -3,6 +3,7 @@
 版本：v1.0 · 2026-09-13
 适用：机器人端语音采集 / TTS 播报 与 本地语音网关（`voice-gateway.js`）对接。
 基础连接约定（Broker、前缀 `{P}`、编码、QoS）见 `MQTT-INTERFACE.md` 第 1 节，本文不再重复。
+机器人 ID 口径：真实机器人端 `robot_id` 默认 `robot-01`，本文示例统一用它（`QB-01` 这类 ID 只出现在看板模拟模式）。
 
 ---
 
@@ -43,7 +44,7 @@ QoS 1，非 retained。建议唤醒后录 2~8 秒。
 
 ```json
 {
-  "robotId": "QB-01",
+  "robotId": "robot-01",
   "ts": 1789215408721,
   "format": "pcm_s16le",
   "sampleRate": 16000,
@@ -79,8 +80,8 @@ QoS 1，非 retained。机器人收到后本地合成播报即可：
 ```json
 {
   "cmdId": "vc-mtz7li6l-u71m",
-  "heardBy": "QB-01",
-  "robotId": "QB-01",
+  "heardBy": "robot-01",
+  "robotId": "robot-01",
   "ts": 1789215408721,
   "transcript": "让哨兵去货架区北排巡检",
   "parsed": {
@@ -102,7 +103,7 @@ QoS 1，非 retained。机器人收到后本地合成播报即可：
 
 | 字段 | 说明 |
 | --- | --- |
-| `heardBy` / `robotId` | 拾音机器人 / 实际执行机器人（语音点名时两者不同，如"让 QB-02 去…"） |
+| `heardBy` / `robotId` | 拾音机器人 / 实际执行机器人（语音点名时两者不同，如"让 robot-02 去…"） |
 | `parsed.target` | 地图点位 ID（`{P}/site/map` 的 `points[].id`） |
 | `action` | `task` 任务 / `estop` 急停口令（此时 `parsed` 为 null） |
 | `engine` | `llm`（Ollama 解析）/ `rule`（规则兜底） |
@@ -115,7 +116,7 @@ QoS 1，非 retained。机器人收到后本地合成播报即可：
 
 - 网关收到 `audio` 消息后先把原始 PCM 包上 WAV 头，存到 `voice-clips/{cmdId}.wav`（默认保留最近 100 条，环形清理），由 `server.js` 挂载到看板同源路径 `/voice-clips/` 提供回放。
 - 网关日志对每段音频输出**时长 / RMS 电平 / 峰值**，例如：
-  `[asr] QB-01 收到音频 5.6s RMS=0.1321 peak=0.843 → /voice-clips/vc-xxx.wav`
+  `[asr] robot-01 收到音频 5.6s RMS=0.1321 peak=0.843 → /voice-clips/vc-xxx.wav`
 - **静音/过短直接判 `failed`**，不再送 ASR（近静音输入会让 SenseVoice 幻觉出 "I."/"Okay." 之类的垃圾文本）：
   - 时长 < 0.4s → `reason: "音频过短（Xs）"`
   - RMS < 0.002 → `reason: "音量过低（RMS=…），疑似未采到声音"`

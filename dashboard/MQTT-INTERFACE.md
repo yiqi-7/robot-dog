@@ -1,8 +1,11 @@
 # 厂区监控运维看板 · MQTT 接口规则
 
-版本：v2.1 · 2026-09-12
+版本：v2.2 · 2026-11-18
 适用：厂区四足机器人数据看板（`quadruped-ops`）与机器人端 / 设施端 / 调度服务的局域网数据对接。
 变更：v2.1 新增 `{P}/site/map` 厂区地图配置接口（第 7 节），任务 `target` 改用地图点位 ID。
+变更：v2.2 遥测频率口径统一为 **1 Hz**（`publish_hz` 默认 `1.0`）；机器人 ID 示例统一为 `robot-01`；
+配置方式更正为**运行时** `public/qbot-config.js`（改完刷新浏览器，无需重新构建）；
+删除过时的局域网固定 IP 示例（改为 `<broker主机>` 占位）。
 
 ---
 
@@ -10,9 +13,9 @@
 
 | 项 | 约定 |
 | --- | --- |
-| Broker | 局域网任意 MQTT Broker；**看板走 WebSocket**（默认 `ws://192.168.6.2:8083/mqtt`）；机器人 / 设施 / 调度服务走 TCP `mqtt://192.168.6.2:1883`。**本仓库统一用 Mosquitto**（`deploy/mosquitto-websockets.conf` 同时开 TCP 1883 与 WS 8083）|
-| 主题前缀 | 默认 `qbot/v1`（全文以 `{P}` 代指），改前缀只需改看板 `src/config.ts` 的 `topicPrefix` |
-| 看板接入 | `src/config.ts` 设 `mode: 'real'` 并填 `brokerUrl` / 账号密码，重新 `npm run build` |
+| Broker | 局域网任意 MQTT Broker；**看板走 WebSocket** `ws://<broker主机>:8083/mqtt`（默认跟随页面主机名，可用 `public/qbot-config.js` 的 `mqtt.brokerUrl` 覆盖）；机器人 / 设施 / 调度服务走 TCP `mqtt://<broker主机>:1883`。**本仓库统一用 Mosquitto**（`deploy/mosquitto-websockets.conf` 同时开 TCP 1883 与 WS 8083，**需装到 `/etc/mosquitto/conf.d/` 并 `systemctl restart mosquitto`**，否则只有 1883，看板连不上）|
+| 主题前缀 | 默认 `qbot/v1`（全文以 `{P}` 代指）；改前缀改看板 `public/qbot-config.js` 的 `mqtt.topicPrefix`（`src/config.ts` 里是兜底默认值），改完刷新浏览器即生效 |
+| 看板接入 | 改 `public/qbot-config.js`：`mqtt.mode: 'real'` + `brokerUrl` / 账号密码，**改完刷新浏览器即生效，无需重新构建**。`src/config.ts` 只提供兜底默认值（`brokerUrl` 跟随页面主机名、`mode` 默认 `real`） |
 | Payload 编码 | 除摄像头帧外全部为 **JSON（UTF-8）**；摄像头帧为**二进制 JPEG** |
 | 时间戳 | 所有 `ts` 及日期字段为 **Unix epoch 毫秒** |
 | 坐标系 | 厂区平面，单位**米**；范围 0–600 (E/X) × 0–380 (N/Y)；看板地图按 1px = 0.5m 换算；`heading` 弧度（0 = +E，逆时针为正） |
@@ -35,7 +38,7 @@
 
 | 主题 | 方向 | retained | 频率 | 说明 |
 | --- | --- | --- | --- | --- |
-| `{P}/robots/{robotId}/state` | 机器人 → 看板 | ✅ | 约 0.7s | 机器人遥测（含静态字段） |
+| `{P}/robots/{robotId}/state` | 机器人 → 看板 | ✅ | **1 Hz（1s）** | 机器人遥测（含静态字段） |
 | `{P}/robots/{robotId}/camera` | 机器人 → 看板 | ❌ | 0.5–2 fps | 摄像头图像帧（二进制 JPEG，**兜底链路**，主推流方案见 3.2） |
 | `{P}/robots/{robotId}/cmd` | 看板 → 机器人 | ❌ | 事件触发 | 指令（任务下发 / 撤销 / 急停 / 复位） |
 | `{P}/fleet/tasks` | 看板 ⇄ 调度方 | ✅ | 变更时 | 任务列表**全量快照**（JSON 数组） |
@@ -51,11 +54,11 @@
 
 ## 3. 机器人消息
 
-### 3.1 遥测 `{P}/robots/{robotId}/state`（retained，约 0.7s）
+### 3.1 遥测 `{P}/robots/{robotId}/state`（retained，1 Hz）
 
 ```json
 {
-  "robotId": "QB-01",
+  "robotId": "robot-01",
   "name": "哨兵",
   "model": "B2-W 工业四足",
   "ts": 1789008000000,
@@ -94,12 +97,12 @@
 | 看板 → MediaMTX（**拉流**） | WebRTC (WHEP) | `http://<看板主机IP>:8889/cam/{robotId}/whep` |
 | 调试 API | HTTP | `http://localhost:9997/v3/paths/list` 查看在线流 |
 
-- **路径约定**：`cam/{robotId}`（如 `cam/QB-01`）。任意路径名都接受，但看板只按此约定拉流。
+- **路径约定**：`cam/{robotId}`（如 `cam/robot-01`）。任意路径名都接受，但看板只按此约定拉流。
 - **编码要求**：视频 **H.264**（Baseline/Main/High 均可），音频可带 AAC/Opus（可不带）。分辨率建议 1280×720 或 1920×1080，帧率 15–30fps，码率建议 ≤ 2Mbps（局域网充裕可调高）。
 - **推流示例**（机器人端 ffmpeg，TCP 传输最稳）：
   ```bash
   ffmpeg -f v4l2 -i /dev/video0 -pix_fmt yuv420p -c:v libx264 -preset ultrafast -tune zerolatency -g 50 \
-    -f rtsp -rtsp_transport tcp rtsp://192.168.6.2:8554/cam/QB-01
+    -f rtsp -rtsp_transport tcp rtsp://<看板主机IP>:8554/cam/robot-01
   ```
 - **断流行为**：推流停止后 MediaMTX 自动释放路径，看板画面 5 秒内回退为"等待推流 + 静态底图"，重新推流后看板自动恢复，无需刷新。
 - **防火墙**：放行 TCP 8554（推流）、TCP 8889（拉流协商）、**UDP 8189**（WebRTC 媒体）。
@@ -137,7 +140,7 @@
   "title": "午间车间巡检",
   "type": "inspection",
   "mode": "scheduled",
-  "robotId": "QB-01",
+  "robotId": "robot-01",
   "target": "车间A-1号产线",
   "priority": "high",
   "status": "published",
@@ -231,7 +234,9 @@ draft ──发布──▶ published ──(即时: 立即 / 定时: 到点)─
 
 ## 6. 模拟模式
 
-`src/config.ts` 中 `mode: 'mock'` 时，看板内置**回环 Broker + 设备模拟器**：6 台机器人（巡航 / 充电 / 故障样例）、8 个设施、任务执行引擎（发布即时任务即执行、定时任务到点执行、撤销即停）、按机器人视角生成 JPEG 图像帧，启动时发布 retained 内置默认地图（`{P}/site/map`）。全部消息流经与真实链路完全一致的主题与 payload，可无依赖演示完整业务流。
+把 `public/qbot-config.js` 的 `mqtt.mode` 设为 `'mock'`（或改 `src/config.ts` 的默认值后重新构建）时，看板内置**回环 Broker + 设备模拟器**：6 台机器人（巡航 / 充电 / 故障样例）、8 个设施、任务执行引擎（发布即时任务即执行、定时任务到点执行、撤销即停）、按机器人视角生成 JPEG 图像帧，启动时发布 retained 内置默认地图（`{P}/site/map`）。全部消息流经与真实链路完全一致的主题与 payload，可无依赖演示完整业务流。
+
+> **机器人 ID 口径**：真实机器人端 `robot_id` 默认是 `robot-01`（`mqtt_bridge` 的参数，见 `src/quadruped_mqtt_bridge/src/node_core.cpp`），本文所有示例统一用它；模拟器内置的 6 台机器人用 `QB-01`、`QB-02` 一类 ID，只在 `mqtt.mode: 'mock'` 下出现。
 ---
 
 ## 7. 厂区地图与任务点接口

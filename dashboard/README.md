@@ -1,7 +1,16 @@
 # 厂区监控运维看板（局域网 MQTT 版）
 
 厂区四足机器人（机器狗）数据看板：总览大屏、机器人列表、任务管理、告警中心。
-数据通过**局域网 MQTT** 通信；内置模拟器可在无真实设备时演示全部功能。
+数据通过**局域网 MQTT** 通信；内置模拟器可在无真实设备时演示全部功能
+（模拟模式需**显式**开启，见「快速开始」）。
+
+> ### ⚠️ 默认配置连的是作者的测试服务器
+>
+> `public/qbot-config.js` 里 `mqtt.brokerUrl` / `streaming.whepBase` 的默认值是
+> `43.172.91.67`（**作者自己的腾讯云测试机**，不是公共服务）。
+> 全新 clone 后直接构建，看板会**静默连到那台机器**。
+> 本地开发请把这两项**替换**成本机 / 你自己的地址，或运行 `deploy/switch_config.sh local`
+> （它会把 `public/qbot-config.js` 与 `dist/qbot-config.js` 两份一起指向 `127.0.0.1`）。
 
 ## 页面
 
@@ -12,32 +21,66 @@
 | `/tasks` | 任务管理：新建/修改/发布/撤销/删除；即时与定时；移动/巡检/充电三类 |
 | `/alarms` | 告警中心：厂区设施状态、24h 温控曲线（最多 4 条对比）、告警列表（筛选/确认） |
 
-## 快速开始（演示模式，无需外部服务）
+## 快速开始（默认连真实 Broker，**不是**演示模式）
+
+`src/config.ts` 与 `public/qbot-config.js` 里 `mode` 的默认值都是 `"real"`，
+所以 `npm run dev` 起来后看板会**直接去连 MQTT broker**，不会离线跑假数据。
+`brokerUrl` 的取值优先级是 `qbot-config.js` > `config.ts` 的页面主机名兜底，
+因此默认连的是 `ws://43.172.91.67:8083/mqtt`（作者的云端）。
 
 ```bash
 npm install
 npm run dev        # 开发模式 http://localhost:3000
 ```
 
+想让它按你的环境跑，改 `public/qbot-config.js` 里对应的项（**改完刷新浏览器即可，无需重新构建**）：
+
+| 目的 | 改法 |
+| --- | --- |
+| 连本机 broker | `mqtt.brokerUrl = ""`（回退到 `ws://<页面主机名>:8083/mqtt`）或 `"ws://127.0.0.1:8083/mqtt"` |
+| 连自己的服务器 | `mqtt.brokerUrl = "ws://<你的IP>:8083/mqtt"`、`streaming.whepBase = "http://<你的IP>:8889"` |
+| 用假数据演示（无需 broker） | `mqtt.mode = "mock"`（内置回环 broker + 设备模拟器，6 台机器人 / 8 个设施） |
+
+> 想做「无外部服务」的演示，**必须显式**把 `mqtt.mode` 改成 `"mock"`；
+> 默认不会进模拟模式。
+
+## 运行时配置 vs 编译期默认值
+
+| 层 | 文件 | 何时生效 | 作用 |
+| --- | --- | --- | --- |
+| 运行时覆盖 | `public/qbot-config.js`（构建后为 `dist/qbot-config.js`） | 改完**刷新浏览器** | 切环境：broker 地址 / 账号密码 / 主题前缀 / WHEP 地址 / `mode` |
+| 编译期默认值 | `src/config.ts` | 需重新 `npm run build` | 兜底默认值：`brokerUrl` 跟随页面主机名 `ws://<pageHost>:8083/mqtt`，`mode` 默认 `real`，`topicPrefix` 默认 `qbot/v1` |
+
+优先级：`qbot-config.js`（写入 `window.__QBOT_CONFIG__`）> `src/config.ts`；字段留空即回退默认值。
+所以**日常切环境只改 `qbot-config.js`**，`config.ts` 只提供 pageHost 兜底默认值，
+不需要为了换地址重新构建。
+
 ## 本地部署（生产模式）
 
 ```bash
-npm run build      # 产出 dist/
+npm run build      # 产出 dist/（会同时拷贝 public/qbot-config.js）
 node server.js     # 静态服务 http://0.0.0.0:8080
 ```
 
 > 本仓库的启动方式统一走项目根目录 `deploy/` 下的脚本（两套部署模式），
 > 不再是这里的 Windows 双击脚本。
-局域网其他电脑访问 `http://<本机IP>:8080`。
+> 局域网其他电脑访问 `http://<本机IP>:8080`。
 
 ## 接入真实机器人
 
-1. 启动 Broker：
-   - Broker 由 `mosquitto` 提供（监听 **TCP 1883** 与 **WS 8083 `/mqtt`**），配置见 `deploy/mosquitto-websockets.conf`
-   - 生产：部署 EMQX / Mosquitto，开启 1883 + WebSocket 8083
-   - Windows 首次启动若弹出防火墙提示，请勾选允许（机器人从局域网访问需要放行 1883/8083）
-2. 修改 `src/config.ts`：`mode: 'real'`（`brokerUrl` 默认已指向本机 `ws://192.168.6.2:8083/mqtt`，按需改 IP / 账号密码）
-3. `npm run build && node server.js` 重新部署，或用根目录 `deploy/mode1_local_all.sh --build`
+1. 启动 Broker：**Mosquitto 必须同时监听 TCP 1883 与 WS 8083**
+   - 配置样例在 `deploy/mosquitto-websockets.conf`（`listener 1883` / `listener 8083` /
+     `protocol websockets` / `allow_anonymous true`）
+   - 装到系统里才生效（`apt install mosquitto` 默认只有 1883）：
+     ```bash
+     sudo cp deploy/mosquitto-websockets.conf /etc/mosquitto/conf.d/websockets.conf
+     sudo systemctl restart mosquitto
+     ss -lntp | grep -E '1883|8083'     # 两行都在才算成功
+     ```
+   - 生产：部署 EMQX / Mosquitto，开启 1883 + WebSocket 8083，并放行防火墙 1883/8083
+2. 改 `public/qbot-config.js`：`mqtt.mode: "real"`、`mqtt.brokerUrl` 填你的 broker 地址
+   （本机可留空，自动回退 `ws://<页面主机名>:8083/mqtt`），**刷新浏览器即生效**，无需重新构建
+3. 生产部署：`npm run build && node server.js`，或用根目录 `deploy/mode1_local_all.sh --build`
 
 **MQTT 接口规则详见 [MQTT-INTERFACE.md](./MQTT-INTERFACE.md)**（主题、payload、QoS、任务时序、图像帧格式、告警确认）。
 
@@ -52,3 +95,12 @@ React 19 + TypeScript + Vite + Tailwind CSS + shadcn/ui + Recharts + mqtt.js
 - `src/providers/trpc.tsx` 任务存储（MQTT fleet/tasks）与原 tRPC 调用兼容垫片
 - `contracts/task.ts` 任务枚举 / 文案 / 类型
 - `src/assets/cam/` 摄像头场景底图（静态兜底 + 模拟帧源）
+
+## 相关文档
+
+| 文档 | 内容 |
+| --- | --- |
+| [MQTT-INTERFACE.md](./MQTT-INTERFACE.md) | MQTT 主题与报文契约 |
+| [VOICE-INTERFACE.md](./VOICE-INTERFACE.md) | 语音链路契约（上行/下行/确认策略） |
+| [VIDEO-LINK.md](./VIDEO-LINK.md) | 视频链路（RTSP → WebRTC/WHEP）拓扑与排障 |
+| [../deploy/README-DEPLOY.md](../deploy/README-DEPLOY.md) | 两种部署模式的完整操作手册（含 mosquitto 8083 配置） |

@@ -10,6 +10,11 @@ Gazebo rgb 相机 → /rgb_camera → image_sender(ffmpeg, H.264 禁B帧)
                     看板浏览器 http://<中转服务器>:8889/cam/<id>/whep
 ```
 
+> ⚠️ **本文里的 `43.172.91.67` 是作者的测试服务器**。部署到你自己的环境时请全部替换：
+> `src/quadruped_sim/launch/quadruped_gz.launch.py` 的 `rtsp_server`、
+> `deploy/mediamtx.yml` 的 `webrtcAdditionalHosts`、
+> `dashboard/public/qbot-config.js` 的 `streaming.whepBase`。
+
 ## 组件与端口
 
 | 组件 | 位置 | 端口 | 说明 |
@@ -17,7 +22,7 @@ Gazebo rgb 相机 → /rgb_camera → image_sender(ffmpeg, H.264 禁B帧)
 | `image_sender` | 端侧 | 出向 | 订阅 `/rgb_camera`，OSD 烧录后交 ffmpeg |
 | ffmpeg | 端侧 | 出向 | 640×480@15fps，`libx264 -profile baseline -bf 0`，RTSP over TCP |
 | MediaMTX | 云端 | 8554 RTSP / 8889 WebRTC | `webrtcAdditionalHosts` 必须填公网 IP |
-| 看板 | 本地 | 8080 页面 | WHEP 拉流走 `useWhep.ts` |
+| 看板 | 本地 | 8080 页面 | WHEP 拉流走 `src/components/useWhep.ts` |
 
 端侧启动参数（`quadruped_gz.launch.py`）：
 

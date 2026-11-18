@@ -38,17 +38,40 @@
 | ROS2 | TITAN_V | TITAN_V |
 | MQTT + 视频中转 + 语音网关 + 看板 | TITAN_V 全在本机 | 腾讯云 `43.172.91.67` |
 
+> ### ⚠️ 部署到你自己的环境前必读：文中 IP 是作者的测试服务器
+>
+> 本文档里出现的 `43.172.91.67` 是**作者自己的腾讯云测试机**，不是公共服务。
+> 直接照抄会在你的环境里连到别人的服务器（机器人画面也会推过去）。
+> **部署到你自己的环境时，请把这些地址全部替换成你自己的服务器 IP / 域名。**
+>
+> 替换点清单（下文用 `<你的IP>` 表示你自己的服务器地址）：
+>
+> | 位置 | 变量 / 参数 | 怎么换 |
+> |---|---|---|
+> | `deploy/switch_config.sh` | `CLOUD_HOST`（默认 `43.172.91.67`） | 改脚本内默认值，或临时覆盖：`CLOUD_HOST=<你的IP> ./switch_config.sh cloud` |
+> | `dashboard/public/qbot-config.js` | `mqtt.brokerUrl`、`streaming.whepBase` | 看板**运行时**配置，改完刷新浏览器即生效（无需重新构建） |
+> | `deploy/mediamtx.yml` | `webrtcAdditionalHosts` | 必须填你的公网 IP，否则浏览器 WHEP 建连失败 |
+> | `deploy/mode2_robot_side.sh` | `--host <你的IP>` | 端侧启动参数（脚本内默认值也要改） |
+> | `deploy/mode2_cloud_side.sh`、`deploy/push_cloud_app.sh` | 云端地址 / ssh 目标 | 脚本内默认值 |
+> | `src/quadruped_sim/launch/quadruped_gz.launch.py` | `broker_host`、`rtsp_server` | 可用 launch 参数覆盖 `broker_host:=<你的IP>`；`rtsp_server` 目前写死在文件里，需直接改 |
+> | `src/quadruped_mqtt_bridge/src/image_sender.cpp` | RTSP 推流地址默认值 | 直接改源码里的默认值 |
+> | 各文档（`README*.md`、`deploy/*.md`、`dashboard/VIDEO-LINK.md`） | 示例命令里的 IP | 只是示例，替换即可 |
+>
+> 只跑**模式 1（单机）**时不需要任何公网地址：`./deploy/switch_config.sh local` 会把看板指向 `127.0.0.1`。
+
 ```bash
-cd deploy
+# 在仓库根目录执行（脚本会自己推导工作区路径，不需要先 cd deploy）
 
 # 模式 1：单机起全部（ROS2 + broker + 语音网关 + 看板）
-./switch_config.sh local && ./mode1_local_all.sh
+./deploy/switch_config.sh local && ./deploy/mode1_local_all.sh
 
 # 模式 2：云端
-./mode2_cloud_side.sh                       # 在 43.172.91.67 上
-./mode2_robot_side.sh --host 43.172.91.67   # 在 TITAN_V 上
+./deploy/mode2_cloud_side.sh                       # 在 43.172.91.67 上（换成你的云端）
+./deploy/mode2_robot_side.sh --host 43.172.91.67   # 在 TITAN_V 上（换成你的云端）
 
-./stop_all.sh local|cloud|robot|all
+# 停止：四选一（local / cloud / robot / all）。
+# 注意别照抄 `local|cloud|robot|all` —— 在 shell 里 `|` 是管道，会被当成命令执行
+./deploy/stop_all.sh local
 ```
 
 详细说明见 **[deploy/README-DEPLOY.md](deploy/README-DEPLOY.md)**。
@@ -61,6 +84,21 @@ cd deploy
 > # 把 model.int8.onnx 与 tokens.txt 放进 dashboard/models/sensevoice/
 > ```
 > 不放模型也能跑：网关会打印"语音通道关闭，仅文本注入可用"，其余功能不受影响。
+
+---
+
+## 环境要求
+
+最小可用配置（数字取自 [deploy/README-DEPLOY.md](deploy/README-DEPLOY.md) 的「云端资源实测」表）：
+
+| 项 | 要求 | 依据 / 说明 |
+|---|---|---|
+| 系统 | **Ubuntu 26.04 LTS**（ROS 2 **Lyrical** 对应的发行版） | 本项目在 26.04 + `/opt/ros/lyrical` 上实测 |
+| ROS 2 | Lyrical + Gazebo `gz sim 10` | 见下方「依赖」 |
+| 内存 | 建议 **8 GB+** | 云端只跑中转（无 Gazebo）时实测 **1967 MB** 可运行：ASR 加载后 `voice-gateway` RSS 约 400 MB，系统余量约 800 MB；本机再跑仿真需要更多 |
+| 磁盘 | 建议 **10 GB+ 可用** | 云端一侧实测 `/opt/qbot` 约 280 MB（模型 229 MB + `node_modules` 45 MB + `dist` 6 MB）；本机还要放 ROS 2 / Gazebo、`build/`、`install/`、`quadruped-ops/` 等构建与运行产物 |
+| ASR 模型 | 约 **290 MB**（不入库，需自行下载） | `model.int8.onnx` 约 229 MB + `tokens.txt` 约 309 KB；模型目录含示例音频共约 290 MB。缺失只会关闭语音通道 |
+| 网络 | 模式 1 无需外网；模式 2 需放行 TCP `1883/8083/8554/8889/8080` + UDP `8189` | 端口清单见 [deploy/README-DEPLOY.md](deploy/README-DEPLOY.md) |
 
 ---
 
@@ -81,6 +119,7 @@ sudo apt install libopencv-dev ffmpeg
 ### 编译
 
 ```bash
+source /opt/ros/lyrical/setup.bash   # 全新机器必须先 source，否则 colcon 找不到 ROS 2 依赖
 cd <本项目根目录>              # 后面命令用 $(pwd)，所以在根目录执行
 colcon build --symlink-install
 source install/setup.bash
@@ -180,7 +219,7 @@ robot-dog/
 | 指标 | 结果 |
 |---|---|
 | Trot 步态速度 | 0.35 m/s（`/odom` 真值） |
-| 遥测频率 | 1 Hz，单帧约 0.2 KB |
+| 遥测频率 | **1 Hz**（`mqtt_bridge` 的 `publish_hz` 默认 `1.0`，见 `src/quadruped_mqtt_bridge/src/node_core.cpp`），单帧约 0.2 KB |
 | 摄像头兜底帧 | 640×360，q90，约 17.7 KB/帧，1 fps |
 | 语音压缩 | 3.6s：112 KB PCM → 5 KB Opus → 7 KB base64 |
 | 云端中转 RTT | 851 ~ 1590 ms（均值 1192 ms，抖动 ±304 ms） |
@@ -201,6 +240,8 @@ robot-dog/
 ---
 
 ## 巡逻与建图实测
+
+### 长时间巡逻统计
 
 以 `/tmp/sim_v6.log`（一次连续运行 81.8 分钟）统计：
 
@@ -231,15 +272,18 @@ Nav2 下发速度但步态推不动（关节速度打满限幅），最终以 `c
 但 Champ 步态在货架/墙角顶住时仍可能连续卡死，这是步态本身的局限，
 不是导航参数问题。彻底解决需要换步态或加专门的"蹬地-收回"恢复动作。
 
-## 地图补扫（仓库东侧）
+### 地图补扫（仓库东侧）
 
 旧图 `factory_full` 有 18.7% 未知区，集中在仓库东侧，当时 (5.0,-6.0)、
 (7.0,-5.5)、(8.0,-5.5) 三处"全规划失败"。补扫按下面的流程做完：
 
-1. **临时切 SLAM 模式**（启动不带 `map:=`），用 `/tmp/rescan_driver.py`
-   跑"逐点规划 + 跟踪"的自动环线（34 点）；每点先 `ComputePathToPose`
-   预验证，失败/中止就先脱困再重试一次，仍不行跳过。绕开 `bt_navigator`
-   直接对接 planner/controller，避免行为树在负载高时激活失败。
+1. **临时切 SLAM 模式**（启动不带 `map:=`），跑"逐点规划 + 跟踪"的自动环线
+   （34 点，路线由 `tools/make_rescan_route.py` 生成——它直接读 `maps/factory_full.pgm`
+   找出未知区边缘）；每点先 `ComputePathToPose` 预验证，失败/中止就先脱困再重试一次，
+   仍不行跳过。绕开 `bt_navigator` 直接对接 planner/controller，避免行为树在负载高时激活失败。
+   说明：跑环线的驱动脚本是一次性临时脚本（历史上放在 `/tmp/rescan_driver.py`，
+   **不在仓库内**，机器重启就没了）；仓库里保留的是可复现的路线生成器
+   `tools/make_rescan_route.py`。
 2. **保守合并**新图与旧图：旧图已知处**全部保留**，旧图未知处只吸收
    新图"确认自由"的格——**不吸收新图的障碍格**。原因：新会话的占据
    像素里有步态抖动噪声，窄通道里多 1% 障碍就会把 0.35 m 内切膨胀
@@ -277,6 +321,7 @@ Nav2 下发速度但步态推不动（关节速度打满限幅），最终以 `c
 | [dashboard/VOICE-INTERFACE.md](dashboard/VOICE-INTERFACE.md) | 语音链路契约（上行/下行/确认策略） |
 | [tools/weaknet/README.md](tools/weaknet/README.md) | 弱网注入与矩阵测试方法 |
 | [deploy/mediamtx-install.md](deploy/mediamtx-install.md) | MediaMTX 安装与配置 |
+| [LICENSE](LICENSE) / [NOTICE](NOTICE) | 许可（MIT）与第三方组件归属 |
 
 ---
 
@@ -290,7 +335,25 @@ Nav2 下发速度但步态推不动（关节速度打满限幅），最终以 `c
 
 ---
 
-## License
+## 许可与致谢
 
-本项目代码用于学习与工程实践。`src/champ/` 为 vendored 上游项目（BSD-3-Clause），
-`dashboard/` 为配套运维看板。
+- **本项目**（本仓库自有的代码与文档，含 `dashboard/`、`deploy/`、`src/quadruped_*`）以
+  **MIT** 许可发布，全文见 [LICENSE](LICENSE)（年份 2026，署名 `yiqi-7`）。
+  > 如与课程 / 竞赛的许可要求冲突，**以课程 / 竞赛要求为准**。
+- **`src/champ/`** 是 vendored 的上游项目 **CHAMP**，遵循其 **BSD-3-Clause** 许可
+  （原文见 [src/champ/champ/include/champ/LICENSE](src/champ/champ/include/champ/LICENSE)）。
+  本项目只在其上做适配补丁（参数包 `quadruped_champ_config`、接口对接），未改变上游许可条款。
+- **第三方组件**（均为运行时依赖，未修改其源码）：
+
+  | 组件 | 用途 | 许可 |
+  |---|---|---|
+  | [CHAMP](https://github.com/chvmp/champ) | 四足步态控制器（`src/champ/`，vendored） | BSD-3-Clause |
+  | [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) + SenseVoice 模型 | 语音识别（ASR） | Apache-2.0 |
+  | [MediaMTX](https://github.com/bluenviron/mediamtx) | RTSP → WebRTC 视频中转 | MIT |
+  | [Eclipse Mosquitto](https://mosquitto.org/) | MQTT Broker | EPL-2.0 |
+  | [Gazebo / gz-sim](https://gazebosim.org/) | 仿真环境 | Apache-2.0 |
+  | [ROS 2](https://docs.ros.org/) / [Nav2](https://nav2.ros.org/) / [SLAM Toolbox](https://github.com/SteveMacenski/slam_toolbox) | 中间件、导航、建图 | Apache-2.0 / 见各自上游仓库 |
+  | [React](https://react.dev/) / [Vite](https://vite.dev/) / [mqtt.js](https://github.com/mqttjs/MQTT.js) / [Recharts](https://recharts.org/) | 看板前端 | MIT |
+
+  各组件版权归其原作者所有；模型权重（SenseVoice、piper）遵循各自发布许可，且**不入库**
+  （见 `.gitignore`）。更细的归属说明见 [NOTICE](NOTICE)。

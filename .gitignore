@@ -52,6 +52,17 @@ quadruped-ops/dist.bak.*/
 # 看板运行副本（含 node_modules 与 290MB 模型），源码以 dashboard/ 为准
 /quadruped-ops/
 
+# 部署 / 验证过程产生的临时产物
+# switch_config.sh 临时改写 launch 前留下的备份
+*.rtsp.bak
+# 语音网关落盘的语音片段（默认保留最近 100 条）
+voice-clips/
+# WHEP 验证用的 SDP 文件
+offer.sdp
+# push_cloud_app.sh 的云端备份包与部署版本标记
+qbot-app-backup-*.tar.gz
+.deployed-rev
+
 # 防误提交：shell 引号事故产物（这类文件名不可能是真实源文件）
 =?[0-9]*
 [\[\]{}|^$()]*
