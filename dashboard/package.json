@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "start": "node server.js",
     "broker": "node broker.js",
-    "check": "tsc -b"
+    "check": "tsc -b",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

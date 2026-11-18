@@ -125,3 +125,23 @@ install(TARGETS ${BUILT_TARGETS} DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS scripts/ptt.sh DESTINATION lib/${PROJECT_NAME})
 
 ament_package()
+
+# ---------------------------------------------------------------------------
+# 单元测试（gtest）：common.hpp 纯函数 + site_map.hpp 静态表
+# 只覆盖【不需要 ROS 运行时】的部分；节点类要 broker / Nav2 action server，另算。
+#   colcon test --packages-select quadruped_mqtt_bridge
+#   colcon test-result --verbose
+# ---------------------------------------------------------------------------
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_common test/test_common.cpp)
+  target_include_directories(test_common PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${MOSQUITTO_INCLUDE_DIR})
+  # common.hpp 里 publishText 直接调 mosquitto_publish：空句柄用例会让它被 odr-use
+  target_link_libraries(test_common ${MOSQUITTO_LIBRARY})
+  if(nlohmann_json_FOUND)
+    target_link_libraries(test_common nlohmann_json::nlohmann_json)
+  endif()
+  install(TARGETS test_common DESTINATION lib/${PROJECT_NAME})
+endif()

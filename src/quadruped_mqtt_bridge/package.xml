@@ -23,6 +23,10 @@
   <build_depend>libopencv-dev</build_depend>
   <exec_depend>libopencv-dev</exec_depend>
 
+  <!-- 测试：gtest 单元测试（ament_add_gtest），代码风格检查 -->
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>ament_lint_auto</test_depend>
+
   <export>
     <build_type>ament_cmake</build_type>
   </export>
