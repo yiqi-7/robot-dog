@@ -26,17 +26,18 @@ npm run build      # 产出 dist/
 node server.js     # 静态服务 http://0.0.0.0:8080
 ```
 
-Windows 下也可直接双击 `start.bat`（自动打开浏览器）；双击 `stop.bat` 一键停止全部服务（Broker + 语音网关 + 看板，Ollama 不动）。
+> 本仓库的启动方式统一走项目根目录 `deploy/` 下的脚本（两套部署模式），
+> 不再是这里的 Windows 双击脚本。
 局域网其他电脑访问 `http://<本机IP>:8080`。
 
 ## 接入真实机器人
 
 1. 启动 Broker：
-   - 联调：项目内置开发用 Broker —— `node broker.js`（或 `npm run broker` / `broker.bat`），同时监听 **TCP 1883**（机器人）与 **WS 8083 `/mqtt`**（看板），无认证仅限局域网
+   - Broker 由 `mosquitto` 提供（监听 **TCP 1883** 与 **WS 8083 `/mqtt`**），配置见 `deploy/mosquitto-websockets.conf`
    - 生产：部署 EMQX / Mosquitto，开启 1883 + WebSocket 8083
    - Windows 首次启动若弹出防火墙提示，请勾选允许（机器人从局域网访问需要放行 1883/8083）
 2. 修改 `src/config.ts`：`mode: 'real'`（`brokerUrl` 默认已指向本机 `ws://192.168.6.2:8083/mqtt`，按需改 IP / 账号密码）
-3. `npm run build && node server.js` 重新部署（或一键 `start.bat`：Broker + 看板一起起）
+3. `npm run build && node server.js` 重新部署，或用根目录 `deploy/mode1_local_all.sh --build`
 
 **MQTT 接口规则详见 [MQTT-INTERFACE.md](./MQTT-INTERFACE.md)**（主题、payload、QoS、任务时序、图像帧格式、告警确认）。
 

@@ -66,7 +66,7 @@ behavior_server  ──┼─> /cmd_vel_nav (Twist)
 
 ```bash
 ros2 launch quadruped_sim quadruped_gz.launch.py gait:=champ nav:=true \
-  map:=/run/media/wby/shuju/Document/robot-dog/maps/factory_latest.yaml
+  map:=/run/media/wby/shuju/Document/robot-dog/maps/factory_full.yaml
 ```
 
 - `map` 留空 -> slam_toolbox 在线建图（首次建图用）
@@ -159,7 +159,7 @@ profile 内容（禁用内置传输，只挂 UDPv4）：
    实测约一半概率能重新起步）。连续卡死时需要人工干预。
 2. **在线 SLAM 地图质量**：边建图边导航时，地图未覆盖到的区域会被当作
    可通行，规划器可能给出穿墙路径。跑一段距离后地图变好，规划也变稳。
-   已保存 `maps/factory_latest.{pgm,yaml}`，后续可改用静态地图。
+   已保存为 `maps/factory_full.{pgm,yaml}`（补扫合并后），后续可改用静态地图。
 3. **collision_monitor 的 polygon_stop 已停用**：激光 0.5~0.6 m 处的
    墙体回波经 TF 变换后落入 stop 多边形，触发后 collision_monitor
    不再转发任何指令（连零值都不发），整条速度链断流。

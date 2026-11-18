@@ -10,7 +10,7 @@
 
 | 项 | 约定 |
 | --- | --- |
-| Broker | 局域网任意 MQTT Broker；**看板走 WebSocket**（默认 `ws://192.168.6.2:8083/mqtt`）；机器人 / 设施 / 调度服务走 TCP `mqtt://192.168.6.2:1883`。**联调可直接用项目内置 `node broker.js`（双端口一次起，无认证）**，生产建议 EMQX / Mosquitto |
+| Broker | 局域网任意 MQTT Broker；**看板走 WebSocket**（默认 `ws://192.168.6.2:8083/mqtt`）；机器人 / 设施 / 调度服务走 TCP `mqtt://192.168.6.2:1883`。**本仓库统一用 Mosquitto**（`deploy/mosquitto-websockets.conf` 同时开 TCP 1883 与 WS 8083）|
 | 主题前缀 | 默认 `qbot/v1`（全文以 `{P}` 代指），改前缀只需改看板 `src/config.ts` 的 `topicPrefix` |
 | 看板接入 | `src/config.ts` 设 `mode: 'real'` 并填 `brokerUrl` / 账号密码，重新 `npm run build` |
 | Payload 编码 | 除摄像头帧外全部为 **JSON（UTF-8）**；摄像头帧为**二进制 JPEG** |
@@ -86,7 +86,7 @@
 
 ### 3.2 摄像头画面（推拉流方案，MediaMTX）
 
-视频图传**不走 MQTT**，走本机部署的 MediaMTX 流媒体服务（`mediamtx/`，由 start.bat 一并启动）：
+视频图传**不走 MQTT**，走本机部署的 MediaMTX 流媒体服务（`mediamtx`，由 `deploy/mode1_local_all.sh` 或云端 systemd 一并启动）：
 
 | 环节 | 协议 | 地址 |
 | --- | --- | --- |

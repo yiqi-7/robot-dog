@@ -155,7 +155,8 @@ QoS 1，非 retained。机器人收到后本地合成播报即可：
 无麦克风/ASR 时联调用，payload 最小只要 `text` 字段：
 
 ```bash
-node test-voice.mjs "让哨兵去充电" "QB-01 去货架区北排巡检"
+# 文本注入方式直接发到 robots/<id>/voice/text（见 deploy/README-DEPLOY.md）
+mosquitto_pub -h 127.0.0.1 -t "qbot/v1/robots/robot-01/voice/text" -m "让哨兵去充电"
 ```
 
 ## 8. 语音网关部署
@@ -168,4 +169,4 @@ node voice-gateway.js
 
 - ASR：`models/sensevoice/` 下放 `model.int8.onnx` + `tokens.txt`（sherpa-onnx SenseVoice 中英日韩粤模型）
 - LLM：本地 Ollama，默认 `qwen2.5:1.5b`（CPU 可流畅运行）；GPU 正常时可 `set VOICE_MODEL=qwen2.5:3b` 提升解析质量。网关启动时自检并预热，缺失自动降级规则解析
-- `start.bat` 已集成：Broker + 语音网关 + 看板三进程一键启动
+- `deploy/mode1_local_all.sh` 已集成：broker + 语音网关 + 看板一键启动

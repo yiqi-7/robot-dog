@@ -46,7 +46,7 @@ export const MQTT_CONFIG = {
 
   /**
    * Broker WebSocket 地址。
-   * 默认自动跟随当前页面主机名：看板（server.js:8080）与 broker.js:8083 由 start.bat
+   * 默认自动跟随当前页面主机名：看板（server.js:8080）与 broker 的 WS 端口 8083 由
    * 在同一台机器启动，这样换电脑/换 IP 后无需改配置。
    * 走云端中转时由 qbot-config.js 覆盖成 "ws://<服务器IP>:8083/mqtt"。
    */

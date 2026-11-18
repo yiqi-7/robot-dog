@@ -79,8 +79,9 @@ curl -i -X POST -H "Content-Type: application/sdp" \
 
 # 3) 看板真实浏览器拉流（先手工启动 Chrome 带调试端口）
 chrome.exe --remote-debugging-port=9225 --no-sandbox --user-data-dir=%TEMP%\chrome-v5 about:blank
-node dashboard/test-video-cdp.mjs       # 判定 videoWidth/readyState
-node dashboard/test-video-frames.mjs    # 判定画面是否有真实内容
+ffprobe -v error -rtsp_transport tcp -select_streams v:0 \
+  -show_entries stream=codec_name,width,height -of csv=p=0 \
+  -i rtsp://43.172.91.67:8554/cam/robot-01   # 验证推流可拉
 ```
 
 > 本机 Chrome 的 `--headless=new` / `--headless=old` 都起不来（启动器进程立刻退出），
