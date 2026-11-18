@@ -63,15 +63,65 @@ sudo systemctl enable --now mediamtx   # 或手工 /usr/local/bin/mediamtx /etc/
 
 ### ① 云端一侧（腾讯云 43.172.91.67）
 
+#### 首次部署（从零到可用，约 15 分钟）
+
+云端原本只跑中转（mosquitto + mediamtx），看板和语音网关要单独装。步骤：
+
 ```bash
-# 云端放一份看板代码（含 node_modules）
-export APP_DIR=/opt/qbot/dashboard
-./mode2_cloud_side.sh
+# ---- 1. Node.js（独立目录安装，不动系统包，避免影响机器上已有项目）----
+curl -sL -o /tmp/node.tar.xz https://nodejs.org/dist/v22.16.0/node-v22.16.0-linux-x64.tar.xz
+sudo mkdir -p /opt/qbot
+sudo tar xJf /tmp/node.tar.xz -C /opt/qbot
+sudo mv /opt/qbot/node-v22.16.0-linux-x64 /opt/qbot/node
+export PATH=/opt/qbot/node/bin:$PATH
+node --version          # v22.16.0
+
+# ---- 2. ffmpeg（Opus 编解码必需）----
+sudo apt-get update && sudo apt-get install -y ffmpeg
+
+# ---- 3. 看板代码 ----
+sudo mkdir -p /opt/qbot/dashboard && sudo chown $USER:$USER /opt/qbot/dashboard
+cd /opt/qbot/dashboard
+# 上传：dist/ server.js voice-gateway.js voice-codec.js
+# 运行时只需两个依赖，不必装整套前端依赖
+cat > package.json <<'EOF'
+{
+  "name": "qbot-dashboard-cloud", "private": true, "version": "1.0.0",
+  "type": "module",
+  "dependencies": { "mqtt": "^5.14.1", "sherpa-onnx-node": "^1.13.8" }
+}
+EOF
+npm install --no-audit --no-fund     # 约 45MB
+
+# ---- 4. ASR 模型（229MB，放到 dashboard/models/sensevoice/）----
+# 需要 model.int8.onnx（228MB）+ tokens.txt（0.3MB）
+
+# ---- 5. 部署脚本 ----
+sudo mkdir -p /opt/qbot/deploy && sudo chown $USER:$USER /opt/qbot/deploy
+# 上传 deploy/*.sh 到 /opt/qbot/deploy/，chmod +x
+```
+
+#### 日常启动
+
+```bash
+cd /opt/qbot/deploy
+./mode2_cloud_side.sh          # 全部服务
+./mode2_cloud_side.sh --check  # 只做健康检查
 ```
 
 启动内容：`mosquitto`（1883/8083）、`mediamtx`（8554/8889）、`voice-gateway.js`、`server.js`（8080）
 
-健康检查：`./mode2_cloud_side.sh --check`
+#### 云端资源实测
+
+| 项 | 数值 |
+|---|---|
+| 内存 | 总 1967 MB，ASR 加载后 `voice-gateway` RSS 约 **400 MB**，系统余量约 800 MB |
+| Swap | 1987 MB（有兜底，但不要指望它跑并发识别） |
+| 磁盘 | `/opt/qbot` 约 280 MB（模型 229MB + node_modules 45MB + dist 6MB） |
+| CPU | ASR 单次识别约 0.3s（3.6 秒音频，numThreads=2） |
+
+> **注意**：这台机器上还有其它服务（`sub2api`、`postgres` 等）。Node 装在
+> `/opt/qbot/node` 而非系统路径，就是为了不干扰它们；部署前后确认它们仍在运行。
 
 ### ② 机器人一侧（TITAN_V）
 
@@ -150,6 +200,9 @@ curl -s -o /dev/null -w 'HTTP %{http_code}\n' -X POST \
 | 语音一直"没听清" | ASR 模型缺失 / 音频格式不支持 | 网关日志看 `[asr]` 行；确认 `models/sensevoice` 存在、`format` 为 `opus` 或 `pcm_s16le` |
 | 端侧连不上云端 MQTT | 安全组未放行 / 云端未起 | `./mode2_robot_side.sh --no-ros` 做预检 |
 | 重复执行脚本后进程叠加 | 旧进程没清干净 | 先 `./stop_all.sh all --with-infra`，再启动 |
+| `--check` 报"收到机器人遥测"但机器人其实没连 | 机器人掉线时 broker 代发的遗嘱是 **retained** 的，订阅立刻就能拿到 | 已修：现在要求连续 2 帧且 `status` 不为 `offline` |
+| `--check` 报"RTSP 无活跃连接"但有推流 | `ss` 输出把 `ESTAB` 放在最左列 | 已修：正则为 `ESTAB.*:8554` |
+| 云端 `mode2_cloud_side.sh` 报"未找到 node" | Node 装在 `/opt/qbot/node/bin`，不在 PATH | 已修：脚本 `resolve_node()` 会自动探测该路径 |
 
 ---
 
