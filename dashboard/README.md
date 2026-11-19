@@ -4,13 +4,9 @@
 数据通过**局域网 MQTT** 通信；内置模拟器可在无真实设备时演示全部功能
 （模拟模式需**显式**开启，见「快速开始」）。
 
-> ### ⚠️ 默认配置连的是作者的测试服务器
->
-> `public/qbot-config.js` 里 `mqtt.brokerUrl` / `streaming.whepBase` 的默认值是
-> `<你的服务器IP>`（**作者自己的腾讯云测试机**，不是公共服务）。
-> 全新 clone 后直接构建，看板会**静默连到那台机器**。
-> 本地开发请把这两项**替换**成本机 / 你自己的地址，或运行 `deploy/switch_config.sh local`
-> （它会把 `public/qbot-config.js` 与 `dist/qbot-config.js` 两份一起指向 `127.0.0.1`）。
+> 默认 `brokerUrl` 与 `whepBase` 留空，按当前页面主机名生成本机/局域网地址；
+> 全新 clone 不会连接任何作者服务器。要连接远端服务，请在运行时配置中显式填写地址。
+
 
 ## 页面
 
@@ -21,19 +17,19 @@
 | `/tasks` | 任务管理：新建/修改/发布/撤销/删除；即时与定时；移动/巡检/充电三类 |
 | `/alarms` | 告警中心：厂区设施状态、24h 温控曲线（最多 4 条对比）、告警列表（筛选/确认） |
 
-## 快速开始（默认连真实 Broker，**不是**演示模式）
+## 快速开始（默认真实 MQTT 模式）
 
 `src/config.ts` 与 `public/qbot-config.js` 里 `mode` 的默认值都是 `"real"`，
 所以 `npm run dev` 起来后看板会**直接去连 MQTT broker**，不会离线跑假数据。
 `brokerUrl` 的取值优先级是 `qbot-config.js` > `config.ts` 的页面主机名兜底，
-因此默认连的是 `ws://<你的服务器IP>:8083/mqtt`（作者的云端）。
+因此默认地址为 `ws://<当前页面主机名>:8083/mqtt`。如未启动本机 Broker，页面会显示未连接。
 
 ```bash
 npm install
 npm run dev        # 开发模式 http://localhost:3000
 ```
 
-想让它按你的环境跑，改 `public/qbot-config.js` 里对应的项（**改完刷新浏览器即可，无需重新构建**）：
+需要连接远端服务时，修改 `public/qbot-config.js` 里对应的项（**改完刷新浏览器即可，无需重新构建**）：
 
 | 目的 | 改法 |
 | --- | --- |

@@ -104,6 +104,7 @@ sudo apt install libmosquitto-dev nlohmann-json3-dev libopencv-dev
 
 速度链：`controller_server → cmd_vel_nav → smoother → cmd_vel_smoothed →
 collision_monitor → cmd_vel_in → deadman_guard → cmd_vel → 底盘`。
+`collision_monitor` 的 `polygon_stop` 当前为禁用状态；Nav2 costmap 的激光障碍层负责导航过程中的障碍避让，不能把该节点描述为已启用的近场急停。
 
 | 机制 | 位置 | 行为 |
 | --- | --- | --- |

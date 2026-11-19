@@ -12,8 +12,7 @@
 | 看板页面 | 机器人侧主机:8080 | 中转服务器:8080 |
 | 浏览器访问 | `http://<机器人侧主机IP>:8080` | `http://<你的服务器IP>:8080` |
 
-> ⚠️ **本文件里出现的 `<你的服务器IP>` 是作者自己的腾讯云测试机**，不是公共服务。
-> 部署到你自己的环境时请全部替换（替换点清单见下文「模式 2」开头的表格）。
+> `<你的服务器IP>` 是文档占位符，不是可直接使用的地址。模式 2 请在对应主机配置 `deploy/qbot.env`，参见 `deploy/qbot.env.example`。
 
 ---
 
@@ -103,24 +102,11 @@ sudo systemctl enable --now mediamtx   # 或手工 /usr/local/bin/mediamtx /etc/
 
 ## 模式 2：云端分离（生产 / 远程控制）
 
-> ### ⚠️ 先替换地址：`<你的服务器IP>` 是作者的测试服务器
->
-> 下面所有命令里的 `<你的服务器IP>` 都是**作者自己的腾讯云机器**。换成你自己的服务器
-> （`<你的IP>`）之后再执行，否则你的机器人会把遥测和视频推给别人的服务器。
->
-> | 替换点 | 变量 / 参数 | 说明 |
-> |---|---|---|
-> | `deploy/switch_config.sh` | `CLOUD_HOST`（默认 `<你的服务器IP>`） | 也可一次性覆盖：`CLOUD_HOST=<你的IP> ./switch_config.sh cloud` |
-> | `deploy/mode2_cloud_side.sh` | 云端本机地址 / 端口 | 云端一侧执行，一般无需改 |
-> | `deploy/mode2_robot_side.sh` | `--host <你的IP>`、脚本内默认 `HOST` | 端侧连云端 |
-> | `deploy/push_cloud_app.sh` | `CLOUD_HOST` / ssh 目标（默认 `ubuntu@<你的服务器IP>`） | 一键同步看板代码 |
-> | `deploy/mediamtx.yml` | `webrtcAdditionalHosts` | 必须填公网 IP，否则 WHEP 拉流失败 |
-> | `dashboard/public/qbot-config.js` | `mqtt.brokerUrl`、`streaming.whepBase` | 看板运行时配置（`switch_config.sh` 会改写它） |
-> | `src/quadruped_sim/launch/quadruped_gz.launch.py` | `broker_host`、`rtsp_server` | `broker_host` 可用 launch 参数传；`rtsp_server` 写死，由脚本 `sed` 临时改 |
-> | `src/quadruped_mqtt_bridge/src/image_sender.cpp` | RTSP 推流地址默认值 | 直接改源码 |
-> | 下文验证命令（`ffprobe` / `curl` / `ssh`） | 命令里的 IP | 换成你的 |
+> 模式 2 使用的地址均由 `deploy/qbot.env` 提供。请先在云端和机器人侧分别配置该文件；
+> `CLOUD_HOST` 指向中转服务器，NAT 环境下 `PUBLIC_IP` 填其对外地址。不要把真实值提交到 Git。
 
-### ① 云端一侧（腾讯云 <你的服务器IP>）
+
+### ① 中转服务器一侧（云端）
 
 #### 首次部署（从零到可用，约 15 分钟）
 
@@ -232,7 +218,7 @@ cd /opt/qbot/deploy
 需要先能免密登录云端。在机器人侧主机上用专用密钥（不要复用已有私钥）：
 
 ```bash
-ssh-keygen -t ed25519 -N "" -C "qbot-deploy@titan_v" -f ~/.ssh/qbot_cloud
+ssh-keygen -t ed25519 -N "" -C "qbot-deploy@robot-host" -f ~/.ssh/qbot_cloud
 # 把 ~/.ssh/qbot_cloud.pub 追加到云端的 ~/.ssh/authorized_keys
 cat >> ~/.ssh/config <<'EOF'
 Host qbot-cloud
@@ -366,9 +352,5 @@ curl -s -o /dev/null -w 'HTTP %{http_code}\n' -X POST \
 
 ## launch 参数说明
 
-`quadruped_gz.launch.py` 已支持 `broker_host` / `broker_port`，会传给四个节点。
-但 `image_sender` 的 **RTSP 推流地址 `rtsp_server` 仍是写死的**，切换模式时脚本用 `sed`
-临时改写并在退出时恢复（备份为 `quadruped_gz.launch.py.rtsp.bak`）。
-
-> 更彻底的做法是把 `rtsp_server` 也提升为 launch 参数，这样就不需要改文件。
-> 目前的做法是为了不引入额外的接口变更。
+`quadruped_gz.launch.py` 支持 `broker_host`、`broker_port` 与 `rtsp_server`。
+`rtsp_server` 默认 `127.0.0.1`；模式 2 的机器人侧脚本从 `CLOUD_HOST` 读取中转地址并显式传入。
