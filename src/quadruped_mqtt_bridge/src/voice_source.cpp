@@ -19,8 +19,8 @@
 //    读它填 §3.1 的 sampleRate/channels，避免两处参数各自写死导致错位。
 //
 // 运行：
-//   ros2 run quadruped_sim voice_source                       # 麦克风 + VAD
-//   ros2 run quadruped_sim voice_source --ros-args \
+//   ros2 run quadruped_mqtt_bridge voice_source                # 麦克风 + VAD
+//   ros2 run quadruped_mqtt_bridge voice_source --ros-args \
 //     -p mode:=file -p wav_path:=<某个.wav> -p loop:=true
 //   ros2 service call /voice/capture std_srvs/srv/Trigger     # 手动录一段（PTT）
 
@@ -35,6 +35,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cerrno>
 #include <cstdio>
 #include <unistd.h>
 #include <cstring>
@@ -343,9 +344,15 @@ private:
       device_.c_str(), sample_rate_, channels_);
 
     while (!stop_ && rclcpp::ok()) {
-      FILE *pipe = ::popen(cmd, "rb");
+      // mode 只能写 "r"，不能写 "rb"。
+      // glibc 2.43 的 popen 会校验 mode 字符串，只接受 "r"/"w"（可带 "e"），
+      // 传 "rb" 直接返回 NULL 且 errno=EINVAL——而 fopen 是接受 "rb" 的，
+      // 很容易照着 fopen 的习惯写错。实测本机 ldd 2.43 上 "rb" 必 NULL、
+      // "r" 正常；这个错误会让语音采集每 3 s 失败重试一次、永远录不到音。
+      FILE *pipe = ::popen(cmd, "r");
       if (!pipe) {
-        RCLCPP_ERROR(get_logger(), "启动 arecord 失败：%s，3 s 后重试", cmd);
+        RCLCPP_ERROR(get_logger(), "启动 arecord 失败：%s（errno=%d），3 s 后重试",
+          cmd, errno);
         std::this_thread::sleep_for(std::chrono::seconds(3));
         continue;
       }

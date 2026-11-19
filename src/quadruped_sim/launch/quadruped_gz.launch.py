@@ -67,6 +67,8 @@ def launch_setup(context, *args, **kwargs):
         )
     gait_on = "true" if gait_mode == "trot" else "false"
     champ_on = "true" if gait_mode == "champ" else "false"
+    # 语音采集开关：默认开，走真实麦克风（voice_source 内部用 arecord + 能量 VAD）
+    voice_on = LaunchConfiguration("voice").perform(context)
     gz_minimized = LaunchConfiguration("gz_minimized").perform(context)
 
     # 把 Gazebo 窗口收进任务栏：启动后调用本包的小工具发送最小化请求，
@@ -284,6 +286,21 @@ def launch_setup(context, *args, **kwargs):
         parameters=mqtt_params(),
     )
 
+    # 语音采集：麦克风 VAD 分段 → voice/audio_pcm，再由 voice_link 按 §3.1 上行。
+    # 之前它只能手动 `ros2 run` 起，默认启动下语音链路没有音频输入，等于哑的。
+    # 本机没有麦克风时 arecord 会失败并每 3 s 重试，只刷日志、不影响其它节点，
+    # 需要安静时传 voice:=false。没有麦克风又要验证整条链路时注入 WAV：
+    #   ros2 run quadruped_mqtt_bridge voice_source --ros-args \
+    #     -p mode:=file -p wav_path:=<某个.wav> -p loop:=true
+    voice_source = Node(
+        package="quadruped_mqtt_bridge",
+        executable="voice_source",
+        name="voice_source",
+        output="screen",
+        # 不给 use_sim_time：音频分段按墙钟（steady_clock）走，与仿真时间无关
+        condition=IfCondition(voice_on),
+    )
+
     # 执行安全看门狗：task_runner 心跳断 → 切断 Nav2→底盘速度链路（见 deadman_guard.cpp）
     # 它不依赖 broker，纯 ROS 内部，是"执行端死亡机器人仍在走"的兜底
     deadman_guard = Node(
@@ -456,7 +473,7 @@ def launch_setup(context, *args, **kwargs):
         robot_state_publisher,
         gz_sim,
         TimerAction(period=3.0, actions=[spawn]),
-        TimerAction(period=5.0, actions=[bridge, gait, odom, camera_info, rgb_camera_info, image_sender, mqtt_bridge, task_runner, voice_link, deadman_guard]),
+        TimerAction(period=5.0, actions=[bridge, gait, odom, camera_info, rgb_camera_info, image_sender, mqtt_bridge, task_runner, voice_link, voice_source, deadman_guard]),
         TimerAction(period=30.0, actions=[patrol_node]),
         # CHAMP 依赖 gz 桥接（/joint_states 与 cmd_pos 都要通），放到 8 秒起
         TimerAction(period=8.0, actions=[champ_launch]),
@@ -508,6 +525,11 @@ def generate_launch_description():
                 "gait",
                 default_value="trot",
                 description="步态控制器：trot(自研) / champ(通用) / none(不启动)",
+            ),
+            DeclareLaunchArgument(
+                "voice",
+                default_value="true",
+                description="是否启动语音采集(voice_source)；无麦克风的机器可传 false",
             ),
             DeclareLaunchArgument(
                 "map",
