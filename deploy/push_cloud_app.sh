@@ -83,11 +83,13 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   exit 0
 fi
 
-info "测试连通性…"
-$SSH "${CLOUD_USER}@${CLOUD_HOST}" "echo ok >/dev/null" || die "无法连接 ${CLOUD_USER}@${CLOUD_HOST}"
-
+# 不再单独跑一次「连通性探测」：每次探测都是一条新的 SSH 连接，而 sshd 的 MaxStartups /
+# fail2ban 对「短时间多条连接」很敏感——实测连续几次部署加排查之后，连接会在密钥交换阶段
+# 就被整段重置（kex_exchange_identification: read: Connection reset by peer），看起来像
+# 云端挂了，其实 8080/1883/8083 全部正常。scp 自身失败时的报错足够定位问题，省一条连接。
 info "上传…"
-$SCP "$TARBALL" "${CLOUD_USER}@${CLOUD_HOST}:/tmp/" || die "上传失败"
+$SCP "$TARBALL" "${CLOUD_USER}@${CLOUD_HOST}:/tmp/" ||
+  die "上传失败（连不上 ${CLOUD_USER}@${CLOUD_HOST}？检查网络/密钥/是否被 SSH 限流）"
 
 REMOTE_SCRIPT=$(cat <<REMOTE
 set -euo pipefail
@@ -158,6 +160,14 @@ REMOTE
 )
 
 info "在云端执行部署…"
-$SSH "${CLOUD_USER}@${CLOUD_HOST}" "bash -s" <<< "$REMOTE_SCRIPT"
+# 不要用 `bash -s <<<"$REMOTE_SCRIPT"`：那样脚本本身就在 stdin 上，远端任何一条会读
+# stdin 的命令（sudo 要密码、npm/ssh 的提示、cat 之类）都会把后面的脚本文本吃掉几行，
+# 于是后续命令拿到的是残缺参数——表现就是莫名报出「用法：grep ...」这类错误，而整体
+# 又"看起来成功"，极难排查。
+# 这里先让 cat 把 stdin 收干写成文件（cat 读到底正是我们要的），再用 bash 从文件执行，
+# 执行期 stdin 已经空，既不依赖远端 shell 是不是 bash（printf %q 会产出 $'...'），
+# 也不多占一条 SSH 连接。
+$SSH "${CLOUD_USER}@${CLOUD_HOST}" \
+  "cat > /tmp/qbot-remote-deploy.sh && bash /tmp/qbot-remote-deploy.sh" <<< "$REMOTE_SCRIPT"
 
 info "全部完成：${CLOUD_USER}@${CLOUD_HOST}:${APP_DIR} ← ${BRANCH}@${REV}"
