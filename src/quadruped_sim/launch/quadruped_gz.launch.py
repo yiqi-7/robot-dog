@@ -2,7 +2,7 @@
 """把四足机器人加载进厂区 Gazebo 世界。
 
 同时启动:
-  - Gazebo 仿真 + 机器人 + trot 步态控制
+  - Gazebo 仿真 + 机器人 + CHAMP 步态控制
   - 里程计桥接 (/odom + tf: odom -> base_link)
   - Nav2 导航栈（slam_toolbox 在线建图 + 路径规划）
   - RViz2 可视化
@@ -12,7 +12,7 @@
   ros2 launch quadruped_sim quadruped_gz.launch.py
   ros2 launch quadruped_sim quadruped_gz.launch.py gui:=false     # 无 Gazebo 界面
   ros2 launch quadruped_sim quadruped_gz.launch.py gz_minimized:=false  # 窗口不最小化
-  ros2 launch quadruped_sim quadruped_gz.launch.py gait:=champ   # 用 CHAMP 步态控制
+  ros2 launch quadruped_sim quadruped_gz.launch.py gait:=none    # 只跑仿真，不起步态
   ros2 launch quadruped_sim quadruped_gz.launch.py map:=/path/to/map.yaml  # 用已有地图定位（不建图）
   ros2 launch quadruped_sim quadruped_gz.launch.py teleop:=false  # 不启动键盘遥控
   ros2 launch quadruped_sim quadruped_gz.launch.py rviz:=false nav:=false  # 只跑仿真
@@ -35,7 +35,7 @@ from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
-# trot 关节指令话题
+# 12 路关节：CHAMP 输出经 champ_joint_relay 落到 <leg>_<joint> 的 cmd_pos
 LEGS = ("fl", "fr", "rl", "rr")
 JOINTS = ("abduction", "hip", "knee")
 
@@ -54,18 +54,19 @@ def launch_setup(context, *args, **kwargs):
     nav_on = LaunchConfiguration("nav").perform(context)
     # map 为空 -> 在线 SLAM 建图；给 yaml 路径 -> 用已有地图 + AMCL 定位
     map_yaml = LaunchConfiguration("map").perform(context)
-    # gait 取值：trot（本项目自研 trot 步态）/ champ（CHAMP 通用步态控制器）/ none
-    # 兼容旧写法：true -> trot，false -> none
+    # gait 取值：champ（CHAMP 通用步态控制器）/ none（不启动，只跑仿真）
+    # 兼容旧写法：true -> champ，false -> none
+    # 自研 trot 步态（gait_controller）已移除，步态统一由 CHAMP 负责；
+    # 老脚本里若还写着 gait:=trot，这里也当 champ 处理，避免直接报错。
     gait_mode = LaunchConfiguration("gait").perform(context).strip().lower()
-    if gait_mode in ("true", "1", ""):
-        gait_mode = "trot"
+    if gait_mode in ("true", "1", "", "trot"):
+        gait_mode = "champ"
     elif gait_mode in ("false", "0"):
         gait_mode = "none"
-    if gait_mode not in ("trot", "champ", "none"):
+    if gait_mode not in ("champ", "none"):
         raise RuntimeError(
-            f"gait 参数只能是 trot / champ / none，收到：{gait_mode}"
+            f"gait 参数只能是 champ / none，收到：{gait_mode}"
         )
-    gait_on = "true" if gait_mode == "trot" else "false"
     champ_on = "true" if gait_mode == "champ" else "false"
     # 语音采集开关：默认开，走真实麦克风（voice_source 内部用 arecord + 能量 VAD）
     voice_on = LaunchConfiguration("voice").perform(context)
@@ -172,15 +173,8 @@ def launch_setup(context, *args, **kwargs):
         remappings=[("/model/quadruped/odometry", "/odom")],
     )
 
-    # ---------- 5. trot 步态 + 里程计 ----------
-    gait = Node(
-        package="quadruped_sim",
-        executable="gait_controller",
-        name="trot_gait",
-        output="screen",
-        parameters=[{"use_sim_time": use_sim_time}],
-        condition=IfCondition(gait_on),
-    )
+    # ---------- 5. 步态 + 里程计 ----------
+    # 步态统一由 CHAMP 承担（自研 trot 步态 gait_controller 已移除）
 
     # CHAMP 步态控制器（vendored 上游 champ_base + 本项目适配配置）
     # 它把 /cmd_vel 转成 12 路关节角 -> /champ/joint_cmd
@@ -473,7 +467,7 @@ def launch_setup(context, *args, **kwargs):
         robot_state_publisher,
         gz_sim,
         TimerAction(period=3.0, actions=[spawn]),
-        TimerAction(period=5.0, actions=[bridge, gait, odom, camera_info, rgb_camera_info, image_sender, mqtt_bridge, task_runner, voice_link, voice_source, deadman_guard]),
+        TimerAction(period=5.0, actions=[bridge, odom, camera_info, rgb_camera_info, image_sender, mqtt_bridge, task_runner, voice_link, voice_source, deadman_guard]),
         TimerAction(period=30.0, actions=[patrol_node]),
         # CHAMP 依赖 gz 桥接（/joint_states 与 cmd_pos 都要通），放到 8 秒起
         TimerAction(period=8.0, actions=[champ_launch]),
@@ -523,8 +517,8 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "gait",
-                default_value="trot",
-                description="步态控制器：trot(自研) / champ(通用) / none(不启动)",
+                default_value="champ",
+                description="步态控制器：champ(CHAMP 通用) / none(不启动)",
             ),
             DeclareLaunchArgument(
                 "voice",

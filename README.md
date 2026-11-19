@@ -18,7 +18,7 @@
 
 | 能力 | 实现 |
 |---|---|
-| 四足步态 | CHAMP 通用控制器 + 自研 `gait_controller`，trot 步态实测 0.35 m/s |
+| 四足步态 | CHAMP 通用控制器（`champ_base` + 适配配置），步态统一由它负责 |
 | 建图与导航 | SLAM Toolbox 在线建图 / 预建图定位 + Nav2 规划控制 |
 | 上云桥接 | 4 个职责单一节点：`mqtt_bridge`(遥测/告警/遗嘱) `task_runner`(派单执行) `voice_link`(语音上行+TTS) `deadman_guard`(心跳看门狗) |
 | 视觉 | `image_sender`：JPEG 快照(MQTT 兜底) + H.264 推流(RTSP→WebRTC 主通道) |

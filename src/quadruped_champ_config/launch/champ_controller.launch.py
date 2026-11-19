@@ -7,12 +7,12 @@ CHAMP 步态控制器启动文件
 依赖方向必须是「具体 → 通用」，配置包反向依赖仿真包会导致真机部署时
 必须装一个用不上的仿真包（这是本次依赖反转要解决的问题）。
 
-单独启动（需主仿真已在运行，且自研 gait_controller 已停）：
+单独启动（需主仿真已在运行；主 launch 默认 gait:=champ 时无须单独起）：
   ros2 launch quadruped_champ_config champ_controller.launch.py \
       urdf_path:=$(ros2 pkg prefix quadruped_sim)/share/quadruped_sim/urdf/quadruped.urdf.xacro
 
-推荐由主 launch 带路径拉起：
-  ros2 launch quadruped_sim quadruped_gz.launch.py gait:=champ
+推荐由主 launch 带路径拉起（gait 默认就是 champ）：
+  ros2 launch quadruped_sim quadruped_gz.launch.py
 
 数据链路（单一职责：本包只管「CHAMP 指令落到 gz 关节插件」这一件事）：
   /cmd_vel
@@ -40,7 +40,7 @@ def _start_champ(context):
             "缺少 urdf_path 参数。CHAMP 需要用 URDF/xacro 做运动学求解，"
             "本包不再自行定位仿真包里的模型文件（避免反向依赖），"
             "请由调用方传入，例如：\n"
-            "  ros2 launch quadruped_sim quadruped_gz.launch.py gait:=champ\n"
+            "  ros2 launch quadruped_sim quadruped_gz.launch.py\n"
             "或手动：\n"
             "  ros2 launch quadruped_champ_config champ_controller.launch.py "
             "urdf_path:=<绝对路径>/quadruped.urdf.xacro"

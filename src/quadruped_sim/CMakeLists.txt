@@ -14,16 +14,9 @@ find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 
 # ---------------------------------------------------------------------------
-# gait_controller：爬行步态控制器
-# 订阅 cmd_vel / cmd_vel_nav / odom，闭环速度反馈，输出 12 关节位置指令
+# 步态由 CHAMP 负责（champ_base + quadruped_champ_config），
+# 本项目自研的 gait_controller 已移除，不再在此构建。
 # ---------------------------------------------------------------------------
-add_executable(gait_controller src/gait_controller.cpp)
-target_link_libraries(gait_controller
-  rclcpp::rclcpp
-  std_msgs::std_msgs
-  geometry_msgs::geometry_msgs
-  nav_msgs::nav_msgs
-  sensor_msgs::sensor_msgs)
 
 # ---------------------------------------------------------------------------
 # odom_pub：把 /odom 位姿广播成 TF (odom -> base_link)
@@ -44,7 +37,7 @@ target_link_libraries(camera_info_pub
   rclcpp::rclcpp
   sensor_msgs::sensor_msgs)
 
-set(BUILT_TARGETS gait_controller odom_pub camera_info_pub)
+set(BUILT_TARGETS odom_pub camera_info_pub)
 
 # ---------------------------------------------------------------------------
 # gz_window_minimize：把 Gazebo GUI 窗口最小化到任务栏

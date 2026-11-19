@@ -19,7 +19,7 @@ dashboard through a **Tencent Cloud relay** for remote control.
 
 | Capability | Implementation |
 |---|---|
-| Quadruped gait | CHAMP locomotion controller + custom `gait_controller`; trot gait measured at 0.35 m/s |
+| Quadruped gait | CHAMP locomotion controller (`champ_base` + adapted config); gait handled solely by CHAMP |
 | Mapping & navigation | SLAM Toolbox online mapping / localization on a prebuilt map + Nav2 planning and control |
 | Cloud bridge | 4 single-responsibility nodes: `mqtt_bridge` (telemetry/alarms/LWT), `task_runner` (task dispatch), `voice_link` (voice uplink + TTS), `deadman_guard` (heartbeat watchdog) |
 | Vision | `image_sender`: JPEG snapshots over MQTT (fallback) + H.264 push over RTSP→WebRTC (primary) |

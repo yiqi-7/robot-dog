@@ -24,8 +24,8 @@ public:
   {
     hb_timeout_ = declare_parameter("hb_timeout", 3.0);
     // 输入超时：Nav2/急停停发速度后必须归零。缺这一条会有两个后果
-    // （隔离实测）：① 本节点以 10Hz 无限重发上一帧，gait_controller 的
-    // cmd_timeout(0.5s) 永不触发；② task_runner 急停直发的零速被覆盖。
+    // （隔离实测）：① 本节点以 10Hz 无限重发上一帧，底盘永远收到旧速度，
+    // cmd_vel 上再也看不到"停"这个状态；② task_runner 急停直发的零速被覆盖。
     in_timeout_ = declare_parameter("in_timeout", 0.5);
     sub_in_ = create_subscription<geometry_msgs::msg::Twist>(
       "cmd_vel_in", 10,

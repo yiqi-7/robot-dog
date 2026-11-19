@@ -113,7 +113,6 @@ collision_monitor → cmd_vel_in → deadman_guard → cmd_vel → 底盘`。
 | 取消校验 | task_runner | cancel 带 id 时必须与在执行任务一致，避免误停别的任务 |
 | 非法目标 | task_runner | 目标不在点位表 → 拒绝 + event(warn) + 回写 revoked |
 | **心跳看门狗** | deadman_guard | 订阅 `safety/heartbeat`(1Hz)；心跳超 3s → 切断速度链路并持续发零速，恢复自动放行 |
-| 执行层兜底 | gait_controller | 同一心跳逻辑（trot 直驱模式下生效，与上一行互为冗余） |
 | 掉线检测 | mqtt_bridge | keepalive 10s（LWT ≈ 15s 内可见），三节点均 10s |
 
 `deadman_guard` 存在的理由：task_runner 是唯一持有 Nav2 动作客户端的执行端，

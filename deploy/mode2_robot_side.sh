@@ -70,7 +70,7 @@ stop_ros() {
     "collision_monito[r]" "smoother_serve[r]" "parameter_bridg[e]" "ros_gz_bridg[e]"
     "voice_sourc[e]" "champ_joint_rela[y]" "quadruped_controlle[r]" "patrol_nod[e]"
     "image_sende[r]" "mqtt_bridg[e]" "task_runne[r]" "voice_lin[k]" "deadman_guar[d]"
-    "gait_controlle[r]" "odom_pu[b]" "camera_info_pu[b]"
+    "odom_pu[b]" "camera_info_pu[b]"
     "gz-sim-gu[i]-client" "gz si[m]"
   )
   local p
