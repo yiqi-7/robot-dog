@@ -2,7 +2,9 @@
 # 按键说话触发器（课程标准 ptt.sh 适配版）：回车 开始录音 / 再按回车 手动结束并上传
 # 对应 quadruped_mqtt_bridge/voice_source 的 /voice/ptt 订阅。
 source /opt/ros/lyrical/setup.bash
-source /run/media/wby/shuju/Document/robot-dog/install/setup.bash
+# 仓库根 = 本脚本所在目录的上三级（scripts -> 包 -> src -> 仓库根）
+WS="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+source "${WS}/install/setup.bash"
 
 echo "按键说话已就绪"
 echo "  · 回车    = 开始录音"

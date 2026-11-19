@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# 模式 1：本地全栈（TITAN_V 单机跑全部内容）
+# 模式 1：本地全栈（单机跑全部内容）
 #
 #   ROS2 仿真 + MQTT Broker + 语音网关 + 看板页面 全部在本机
 #   用途：本地通读代码、单机自测、无外网也能跑
@@ -54,7 +54,7 @@ usage() {
   cat <<'EOF'
 用法: ./mode1_local_all.sh [选项]
 
-本地全栈模式：在 TITAN_V 上启动 ROS2 + MQTT + 语音网关 + 看板。
+本地全栈模式：在本机启动 ROS2 + MQTT + 语音网关 + 看板。
 
 选项:
   -h, --help      显示本帮助
@@ -242,7 +242,7 @@ if [[ "$NO_ROS" -eq 0 ]]; then
 
   stop_ros
   # 本机没有 mediamtx 时的正确做法是**关掉 RTSP 推流**，而不是"保持原值"：
-  # 保持原值 = 按 launch 里的 43.172.91.67 把画面推到公网云端，与模式 1
+  # 保持原值 = 按 launch 里的 rtsp_server 把画面推到公网，与模式 1
   # "本地全栈、不出网"的语义相反（实测确实推上去了）；
   # 指向 127.0.0.1 又会让 ffmpeg 空转重连。image_sender 已有 rtsp_enable
   # 参数开关，且 MQTT 兜底帧不再依赖 ffmpeg 存活。
@@ -259,7 +259,7 @@ if [[ "$NO_ROS" -eq 0 ]]; then
   ( cd "$WS" && setsid nohup bash -c "
       source /opt/ros/lyrical/setup.bash
       source install/setup.bash
-      export FASTRTPS_DEFAULT_PROFILES_FILE=/home/wby/fastdds_udp.xml
+      export FASTRTPS_DEFAULT_PROFILES_FILE=${HOME}/fastdds_udp.xml
       exec ros2 launch quadruped_sim quadruped_gz.launch.py \
         gui:=false rviz:=false nav:=true gait:=champ teleop:=false patrol:=false \
         map:=${MAP} \

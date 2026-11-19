@@ -7,17 +7,21 @@
 #
 #   用法：
 #     ./switch_config.sh local     # 指向本机 127.0.0.1
-#     ./switch_config.sh cloud     # 指向云端 43.172.91.67
+#     ./switch_config.sh cloud     # 指向云端（地址取 CLOUD_HOST）
 #     ./switch_config.sh show      # 查看当前生效配置
 #     ./switch_config.sh restore   # 从备份恢复
 # ===========================================================================
 set -euo pipefail
 
+# 真实部署地址放在 deploy/qbot.env（不入库），参考同目录 qbot.env.example
+_qbot_env="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qbot.env"
+if [[ -f "$_qbot_env" ]]; then . "$_qbot_env"; fi
+
 # 路径允许环境变量覆盖：云端没有 /run/media/... 这个盘，
 # 直接写死会让云端执行时 mkdir 失败、set -e 退出
-WS="${WS:-/run/media/wby/shuju/Document/robot-dog}"
+WS="${WS:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 OPS="${OPS:-${WS}/quadruped-ops}"
-CLOUD_HOST="${CLOUD_HOST:-43.172.91.67}"
+CLOUD_HOST="${CLOUD_HOST:-}"        # 必填：由 deploy/qbot.env 或环境变量提供
 MQTT_PORT="${MQTT_PORT:-1883}"
 WS_PORT="${WS_PORT:-8083}"
 WHEP_PORT="${WHEP_PORT:-8889}"
@@ -31,7 +35,7 @@ usage() {
 用法: ./switch_config.sh <local|cloud|show|restore>
 
   local    看板连本机（ws://127.0.0.1:8083，WHEP http://127.0.0.1:8889，无 STUN）
-  cloud    看板连云端（ws://43.172.91.67:8083，WHEP http://43.172.91.67:8889，带 STUN）
+  cloud    看板连云端（ws://<CLOUD_HOST>:8083，WHEP http://<CLOUD_HOST>:8889，带 STUN）
   show     打印当前生效配置
   restore  从 .bak 备份恢复
 

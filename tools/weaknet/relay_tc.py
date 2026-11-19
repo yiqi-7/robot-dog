@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """真实中转拓扑弱网测试（端侧 tc 整形 + 服务器侧观测，两段分开执行）。
 
-用法（在 TITAN_V 上跑）：
+用法（在机器人侧主机上跑）：
   python3 relay_weaknet.py apply <档位>    # 施加弱网
   python3 relay_weaknet.py clear           # 清除
   python3 relay_weaknet.py probe           # 观测端侧连接状态

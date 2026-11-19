@@ -8,8 +8,8 @@ import sys
 import time
 
 # 工作区路径：优先取环境变量，便于换机器/换盘符时不改代码
-WS = os.environ.get("QBOT_WS", "/run/media/wby/shuju/Document/robot-dog")
-# FastDDS 的 UDP profile 随用户家目录变化，不再写死 /home/wby
+WS = os.environ.get("QBOT_WS") or os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+# FastDDS 的 UDP profile 随用户家目录变化，这里用 $HOME 推导
 FASTDDS = os.environ.get("FASTRTPS_PROFILE",
                          os.path.expanduser("~/fastdds_udp.xml"))
 ENV = ("cd %s && source /opt/ros/lyrical/setup.bash && source install/setup.bash && "
@@ -246,7 +246,7 @@ check("任务单实例（重传未重复建）", cnt <= 1, "%d 条" % cnt)
 
 print("=== W4 弱网下语音链路 ===")
 bg(ENV + " && ros2 run quadruped_mqtt_bridge voice_source --ros-args -p mode:=file "
-   '-p "wav_path:=/home/wby/voice-clips/cmd_inspection.wav" -p loop:=false', "/tmp/voice_p6.log")
+   '-p "wav_path:=$HOME/voice-clips/cmd_inspection.wav" -p loop:=false', "/tmp/voice_p6.log")
 t_start = int(time.time() * 1000) - 2000   # 只认本次产生的指令，排除上一轮残留
 res_v, ok = "无", False
 for _ in range(5):

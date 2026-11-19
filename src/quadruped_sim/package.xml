@@ -4,7 +4,7 @@
   <name>quadruped_sim</name>
   <version>0.1.0</version>
   <description>四足机器人仿真：xacro 模型 + Gazebo 加载 + C++ 爬行步态控制 + 仿真传感器与 SLAM/Nav2 参数。上云桥接见 quadruped_mqtt_bridge，自主导航见 quadruped_explorer。</description>
-  <maintainer email="wby@example.com">wby</maintainer>
+  <maintainer email="maintainer@example.com">robot-dog maintainers</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>

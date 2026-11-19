@@ -46,5 +46,10 @@ Copyright (c) 2026 yiqi-7
 四、文档中的外部地址
 -------------------------------------------------------------------------------
 
-文档与配置样例里出现的 43.172.91.67 是**作者自己的测试服务器**，不属于本项目资产。
-部署到你自己的环境时请全部替换（替换点清单见 README.md 与 deploy/README-DEPLOY.md）。
+本项目**不包含任何真实服务器地址**。需要联网的部署（模式 2）请自行填写：
+
+    cp deploy/qbot.env.example deploy/qbot.env
+    # 编辑 deploy/qbot.env，填入你自己的中转服务器地址
+
+`deploy/qbot.env` 已在 `.gitignore` 中排除，不会被提交；字段说明见
+`deploy/qbot.env.example` 与 `deploy/README-DEPLOY.md`。

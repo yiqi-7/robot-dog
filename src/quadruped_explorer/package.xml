@@ -4,7 +4,7 @@
   <name>quadruped_explorer</name>
   <version>0.1.0</version>
   <description>四足机器人自主导航：航点环线巡逻、卡死重试、状态播报。不依赖 Gazebo，真机同样适用。</description>
-  <maintainer email="wby@example.com">wby</maintainer>
+  <maintainer email="maintainer@example.com">robot-dog maintainers</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>

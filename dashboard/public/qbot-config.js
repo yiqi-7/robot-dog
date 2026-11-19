@@ -4,11 +4,11 @@
  * 优先级：本文件（window.__QBOT_CONFIG__）> src/config.ts 里的默认值。
  * 字段留空（或整行删掉）= 用默认值（跟随页面主机名）。
  *
- * ⚠️ 重要：下面 brokerUrl / whepBase 的默认值 43.172.91.67 是**作者的测试环境**，
- *    不是公共服务。全新 clone 后直接构建，看板会静默连到作者的服务器。
- *    本地开发请改成本机地址（下面几种用法），或运行
- *      deploy/switch_config.sh local
- *    它会同时改写 public/qbot-config.js 与 dist/qbot-config.js，把地址指向 127.0.0.1。
+ * 默认两个地址都是空字符串：此时看板自动连「当前页面所在主机」，即
+ * 用 http://192.168.1.50:8080 打开就连 ws://192.168.1.50:8083 —— 全新 clone
+ * 直接构建即可在本机/局域网用，不会连到任何写死的外部服务器。
+ *    需要指向别处时（例如 broker 在中转服务器上），填下面的 brokerUrl / whepBase，
+ *    或运行 deploy/switch_config.sh cloud 让它按 deploy/qbot.env 生成。
  *    改完**刷新浏览器即生效**，不需要重新构建。
  *
  * 三种常见用法：
@@ -31,9 +31,9 @@ window.__QBOT_CONFIG__ = {
     mode: "real",
     // 云端中转服务器：看板 → 腾讯云 broker → 端侧机器狗
     // 本机自测时改成 "" 即回退到 ws://<当前页面主机名>:8083/mqtt（含 127.0.0.1）
-    // ⚠️ 43.172.91.67 是作者的测试服务器：部署到自己的环境请替换成你的 IP/域名，
-    //    或直接 `deploy/switch_config.sh local` 一键指向本机。
-    brokerUrl: "ws://43.172.91.67:8083/mqtt",
+    // 留空 = ws://<当前页面主机名>:8083/mqtt（同机或局域网直接可用）
+    // 中转部署时填 "ws://<你的服务器IP>:8083/mqtt"
+    brokerUrl: "",
     username: "",
     password: "",
     topicPrefix: "qbot/v1",
@@ -41,7 +41,7 @@ window.__QBOT_CONFIG__ = {
   streaming: {
     // 云端 MediaMTX（WHEP 拉流）；本机自测时改成 "" 回退到页面主机名
     // ⚠️ 同样是作者的测试服务器，部署时换成你自己的 IP/域名
-    whepBase: "http://43.172.91.67:8889",
+    whepBase: "",
     // 公网/NAT 场景加 STUN 提升建连成功率；局域网可留空数组
     iceServers: ["stun:stun.l.google.com:19302"],
   },

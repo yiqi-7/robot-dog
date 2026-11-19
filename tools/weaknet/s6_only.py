@@ -7,8 +7,8 @@ import subprocess
 import time
 
 # 工作区路径：优先取环境变量，便于换机器/换盘符时不改代码
-WS = os.environ.get("QBOT_WS", "/run/media/wby/shuju/Document/robot-dog")
-# FastDDS 的 UDP profile 随用户家目录变化，不再写死 /home/wby
+WS = os.environ.get("QBOT_WS") or os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+# FastDDS 的 UDP profile 随用户家目录变化，这里用 $HOME 推导
 FASTDDS = os.environ.get("FASTRTPS_PROFILE",
                          os.path.expanduser("~/fastdds_udp.xml"))
 ENV = ("cd %s && source /opt/ros/lyrical/setup.bash && source install/setup.bash && "

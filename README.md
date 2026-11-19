@@ -35,12 +35,12 @@
 | | 模式 1：本地全栈 | 模式 2：云端分离 |
 |---|---|---|
 | 场景 | 本地读代码 / 单机演示 | 生产部署 / 远程控制 |
-| ROS2 | TITAN_V | TITAN_V |
-| MQTT + 视频中转 + 语音网关 + 看板 | TITAN_V 全在本机 | 腾讯云 `43.172.91.67` |
+| ROS2 | 机器人侧主机 | 机器人侧主机 |
+| MQTT + 视频中转 + 语音网关 + 看板 | 全在本机 | 你的中转服务器（地址见 `deploy/qbot.env`） |
 
 > ### ⚠️ 部署到你自己的环境前必读：文中 IP 是作者的测试服务器
 >
-> 本文档里出现的 `43.172.91.67` 是**作者自己的腾讯云测试机**，不是公共服务。
+> 本文档用 `<你的服务器IP>` 表示中转服务器地址，需要你自己填在 `deploy/qbot.env` 里。
 > 直接照抄会在你的环境里连到别人的服务器（机器人画面也会推过去）。
 > **部署到你自己的环境时，请把这些地址全部替换成你自己的服务器 IP / 域名。**
 >
@@ -48,7 +48,7 @@
 >
 > | 位置 | 变量 / 参数 | 怎么换 |
 > |---|---|---|
-> | `deploy/switch_config.sh` | `CLOUD_HOST`（默认 `43.172.91.67`） | 改脚本内默认值，或临时覆盖：`CLOUD_HOST=<你的IP> ./switch_config.sh cloud` |
+> | `deploy/switch_config.sh` | `CLOUD_HOST`（见 `deploy/qbot.env`） | 写入 `deploy/qbot.env`，或临时覆盖：`CLOUD_HOST=<你的IP> ./switch_config.sh cloud` |
 > | `dashboard/public/qbot-config.js` | `mqtt.brokerUrl`、`streaming.whepBase` | 看板**运行时**配置，改完刷新浏览器即生效（无需重新构建） |
 > | `deploy/mediamtx.yml` | `webrtcAdditionalHosts` | 必须填你的公网 IP，否则浏览器 WHEP 建连失败 |
 > | `deploy/mode2_robot_side.sh` | `--host <你的IP>` | 端侧启动参数（脚本内默认值也要改） |
@@ -66,8 +66,8 @@
 ./deploy/switch_config.sh local && ./deploy/mode1_local_all.sh
 
 # 模式 2：云端
-./deploy/mode2_cloud_side.sh                       # 在 43.172.91.67 上（换成你的云端）
-./deploy/mode2_robot_side.sh --host 43.172.91.67   # 在 TITAN_V 上（换成你的云端）
+./deploy/mode2_cloud_side.sh                       # 在你的中转服务器上执行
+./deploy/mode2_robot_side.sh --host <你的服务器IP>   # 在机器人侧执行
 
 # 停止：四选一（local / cloud / robot / all）。
 # 注意别照抄 `local|cloud|robot|all` —— 在 shell 里 `|` 是管道，会被当成命令执行
@@ -131,14 +131,14 @@ source install/setup.bash
 ros2 launch quadruped_sim quadruped_gz.launch.py \
   gui:=false rviz:=false nav:=true gait:=champ teleop:=false patrol:=false \
   map:=$(pwd)/maps/factory_full.yaml \
-  broker_host:=43.172.91.67 broker_port:=1883
+  broker_host:=<你的服务器IP> broker_port:=1883
 ```
 
 ### 看板
 
 ```bash
 # 浏览器打开
-http://43.172.91.67:8080          # 模式 2
+http://<你的服务器IP>:8080          # 模式 2
 http://127.0.0.1:8080             # 模式 1
 ```
 

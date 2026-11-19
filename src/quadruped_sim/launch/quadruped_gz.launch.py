@@ -245,6 +245,8 @@ def launch_setup(context, *args, **kwargs):
     # 中转服务器地址：默认本机回环，弱网/远程部署时用 broker_host:=<服务器IP> 覆盖
     broker_host = LaunchConfiguration("broker_host").perform(context)
     rtsp_enable = LaunchConfiguration("rtsp_enable").perform(context)
+    # 推流目标：默认本机；模式 2 用 rtsp_server:=<中转服务器> 指到云端
+    rtsp_server = LaunchConfiguration("rtsp_server").perform(context)
     broker_port = int(LaunchConfiguration("broker_port").perform(context))
 
     def mqtt_params():
@@ -336,7 +338,7 @@ def launch_setup(context, *args, **kwargs):
                 # broker 必须跟随 launch 参数，否则默认 127.0.0.1，图像帧上不了云
                 "broker_host": broker_host,
                 "broker_port": broker_port,
-                "rtsp_server": "43.172.91.67",
+                "rtsp_server": rtsp_server,
                 "rtsp_port": 8554,
                 # 模式 1 无本地中转时应传 false，避免把画面推到公网云端
                 "rtsp_enable": rtsp_enable == "true",
@@ -503,6 +505,9 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "rtsp_enable", default_value="true",
                 description="是否推 RTSP 视频流；模式 1（无本地中转）传 false，只发 MQTT 兜底帧"),
+            DeclareLaunchArgument(
+                "rtsp_server", default_value="127.0.0.1",
+                description="RTSP 推流目标主机；模式 2 传中转服务器地址"),
             DeclareLaunchArgument(
                 "gui", default_value="true", description="是否显示 Gazebo 界面"
             ),

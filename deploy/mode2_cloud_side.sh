@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# 模式 2 · 云端一侧（在腾讯云 43.172.91.67 上执行）
+# 模式 2 · 云端一侧（在中转服务器上执行）
 #
 #   本脚本负责云端全部服务：MQTT Broker + MediaMTX + 语音网关 + 看板页面
-#   机器人侧（TITAN_V）由 mode2_robot_side.sh 启动，只跑 ROS2 并推流/上报到本机
+#   机器人侧由 mode2_robot_side.sh 启动，只跑 ROS2 并推流/上报到本机
 #
 #   数据流：
 #     机器人 ──MQTT 1883──▶ mosquitto ──8083(ws)──▶ 浏览器看板(8080)
@@ -12,6 +12,10 @@
 # ===========================================================================
 set -euo pipefail
 
+# 真实部署地址放在 deploy/qbot.env（不入库），参考同目录 qbot.env.example
+_qbot_env="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qbot.env"
+if [[ -f "$_qbot_env" ]]; then . "$_qbot_env"; fi
+
 # ---------------------------- 配置 ----------------------------
 APP_DIR="${APP_DIR:-/opt/qbot/dashboard}"     # 看板/网关代码目录（需含 node_modules）
 DASH_PORT="${DASH_PORT:-8080}"
@@ -19,7 +23,7 @@ MQTT_PORT="${MQTT_PORT:-1883}"
 WS_PORT="${WS_PORT:-8083}"
 RTSP_PORT="${RTSP_PORT:-8554}"
 WHEP_PORT="${WHEP_PORT:-8889}"
-PUBLIC_IP="${PUBLIC_IP:-43.172.91.67}"        # MediaMTX 对外宣告的候选地址
+PUBLIC_IP="${PUBLIC_IP:-}"                    # MediaMTX 对外宣告地址，由 qbot.env 提供
 LOG_DASH="/tmp/qbot_cloud_dash.log"
 LOG_GW="/tmp/qbot_cloud_gw.log"
 # 定位 node：优先系统 PATH，其次常见独立安装目录（云端装在 /opt/qbot/node）
@@ -265,7 +269,7 @@ cat <<EOF
     看板  ${LOG_DASH}
     网关  ${LOG_GW}
 
-  下一步   : 在机器人（TITAN_V）上执行 ./mode2_robot_side.sh
+  下一步   : 在机器人侧主机上执行 ./mode2_robot_side.sh
   健康检查 : ./mode2_cloud_side.sh --check
   停止     : ./stop_all.sh cloud
 =====================================================================

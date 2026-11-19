@@ -14,9 +14,11 @@
 """
 import io
 import math
+import os
 import re
 
-P = "/run/media/wby/shuju/Document/robot-dog/maps/factory_full.pgm"
+ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+P = os.path.join(ROOT, "maps", "factory_full.pgm")
 
 d = open(P, "rb").read()
 m = re.search(rb"P5\s+(\d+)\s+(\d+)\s+(\d+)", d)
@@ -126,6 +128,6 @@ lines = [
 for x, y, name in route:
     lines.append('  - {x: %.2f, y: %.2f, name: "%s"}' % (x, y, name))
 
-out = "/run/media/wby/shuju/Document/robot-dog/tools/rescan_warehouse.yaml"
+out = os.path.join(ROOT, "tools", "rescan_warehouse.yaml")
 io.open(out, "w", encoding="utf-8", newline="\n").write("\n".join(lines) + "\n")
 print("\n已写出 %s（%d 个点）" % (out, len(route)))

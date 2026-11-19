@@ -7,8 +7,8 @@
 #   人工 scp 上去的，仓库改了云端不知道，反过来云端临时改的东西仓库也没有，
 #   两边会静默漂移。本脚本只从 git 已跟踪文件打包，保证云端内容可追溯到某个 commit。
 #
-# 用法（在开发机/TITAN_V 上执行）：
-#   ./deploy/push_cloud_app.sh                     # 推到默认云端 43.172.91.67
+# 用法（在开发机/机器人侧主机上执行）：
+#   ./deploy/push_cloud_app.sh                     # 推到 CLOUD_HOST（deploy/qbot.env）
 #   ./deploy/push_cloud_app.sh --host 1.2.3.4      # 换目标
 #   ./deploy/push_cloud_app.sh --key ~/.ssh/x.pem  # 指定私钥
 #   ./deploy/push_cloud_app.sh --dry-run           # 只看会传什么
@@ -20,9 +20,13 @@
 # ============================================================================
 set -euo pipefail
 
+# 真实部署地址放在 deploy/qbot.env（不入库），参考同目录 qbot.env.example
+_qbot_env="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qbot.env"
+if [[ -f "$_qbot_env" ]]; then . "$_qbot_env"; fi
+
 WS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CLOUD_HOST="43.172.91.67"
-CLOUD_USER="ubuntu"
+CLOUD_HOST="${CLOUD_HOST:-}"      # 由 deploy/qbot.env 或 --host 提供
+CLOUD_USER="${CLOUD_USER:-ubuntu}"
 SSH_KEY=""
 APP_DIR="/opt/qbot/dashboard"
 DO_BUILD=1

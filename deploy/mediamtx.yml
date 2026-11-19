@@ -13,7 +13,9 @@ rtmp: no
 srt: no
 webrtc: yes
 webrtcAddress: :8889
-webrtcAdditionalHosts: [43.172.91.67]
+# 公网 IP 经 NAT 时自动探测拿到的是内网地址，必须在这里显式写对外地址，
+# 否则浏览器 WHEP 建连失败。填你自己的服务器公网 IP 或域名（见 qbot.env 的 PUBLIC_IP）。
+webrtcAdditionalHosts: [YOUR_PUBLIC_IP]
 authInternalUsers:
   - user: any
     ips: [ ]

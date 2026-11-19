@@ -52,7 +52,7 @@ def srv(cmd, timeout=90):
 
 
 def robot(cmd, timeout=120):
-    """在端侧 TITAN_V 上执行"""
+    """在机器人侧主机上执行"""
     inner = cmd.replace('"', '\\"')
     return run('ssh -4 -o ConnectTimeout=20 %s "%s"' % (ROBOT, inner), timeout)
 

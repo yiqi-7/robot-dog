@@ -39,9 +39,10 @@ VoiceLinkNode::VoiceLinkNode() : rclcpp::Node("voice_link")
   audio_codec_       = declare_parameter("audio_codec", "opus");
   opus_bitrate_      = declare_parameter("opus_bitrate", "16k");
   // TTS 本地播报：piper（模型 course 提供 zh_CN-huayan-medium）
-  piper_bin_   = declare_parameter("piper_bin", "/home/wby/venvs/piper/bin/piper");
+  // 默认为空：由部署方通过 piper_bin 参数或 PATH 指定，避免写死某台机器的路径
+  piper_bin_   = declare_parameter("piper_bin", "piper");
   piper_model_ = declare_parameter("piper_model",
-    "/run/media/wby/shuju/Document/robot-dog/quadruped-ops/models/piper/zh_CN-huayan-medium.onnx");
+    "quadruped-ops/models/piper/zh_CN-huayan-medium.onnx");
 
   audio_topic_ = topic_prefix_ + "/robots/" + robot_id_ + "/audio";
   tts_topic_   = topic_prefix_ + "/robots/" + robot_id_ + "/tts";

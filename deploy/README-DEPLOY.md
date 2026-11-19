@@ -5,22 +5,22 @@
 | | 模式 1：本地全栈 | 模式 2：云端分离 |
 |---|---|---|
 | 适用场景 | 本地学代码、单机演示、无外网 | 生产部署、远程控制 |
-| ROS2 仿真 | TITAN_V | TITAN_V |
-| MQTT Broker | TITAN_V | 腾讯云 `43.172.91.67` |
-| 视频中转（MediaMTX） | TITAN_V（需自装，未装则降级） | 腾讯云 |
-| 语音网关（ASR/LLM） | TITAN_V | 腾讯云 |
-| 看板页面 | TITAN_V:8080 | 云端:8080 |
-| 浏览器访问 | `http://<TITAN_V-IP>:8080` | `http://43.172.91.67:8080` |
+| ROS2 仿真 | 机器人侧主机 | 机器人侧主机 |
+| MQTT Broker | 机器人侧主机 | 中转服务器 `<你的服务器IP>` |
+| 视频中转（MediaMTX） | 机器人侧主机（需自装，未装则降级） | 中转服务器 |
+| 语音网关（ASR/LLM） | 机器人侧主机 | 中转服务器 |
+| 看板页面 | 机器人侧主机:8080 | 中转服务器:8080 |
+| 浏览器访问 | `http://<机器人侧主机IP>:8080` | `http://<你的服务器IP>:8080` |
 
-> ⚠️ **本文件里出现的 `43.172.91.67` 是作者自己的腾讯云测试机**，不是公共服务。
+> ⚠️ **本文件里出现的 `<你的服务器IP>` 是作者自己的腾讯云测试机**，不是公共服务。
 > 部署到你自己的环境时请全部替换（替换点清单见下文「模式 2」开头的表格）。
 
 ---
 
-## 模式 1：本地全栈（TITAN_V 单机）
+## 模式 1：本地全栈（单机）
 
 ```bash
-cd /run/media/wby/shuju/Document/robot-dog/deploy
+cd <仓库路径>/deploy
 
 ./switch_config.sh local        # 看板配置指向 127.0.0.1
 ./mode1_local_all.sh            # 一条命令起全部
@@ -31,7 +31,7 @@ cd /run/media/wby/shuju/Document/robot-dog/deploy
 > 必须先备好，否则 `mode1_local_all.sh` 会在前置检查处直接退出。
 >
 > ```bash
-> cd /run/media/wby/shuju/Document/robot-dog
+> cd <仓库路径>
 > cp -a dashboard quadruped-ops     # 或从备份拷回
 > cd quadruped-ops && npm install && npm run build
 > # 再把 ASR 模型放到 models/sensevoice/（model.int8.onnx + tokens.txt）
@@ -43,7 +43,7 @@ cd /run/media/wby/shuju/Document/robot-dog/deploy
 > 把仓库里的配置装进 `conf.d/` 并重启：
 >
 > ```bash
-> # 在 TITAN_V 上（仓库根目录执行）
+> # 在机器人侧主机上（仓库根目录执行）
 > sudo cp deploy/mosquitto-websockets.conf /etc/mosquitto/conf.d/websockets.conf
 > sudo systemctl restart mosquitto
 >
@@ -85,7 +85,7 @@ cd /run/media/wby/shuju/Document/robot-dog/deploy
 
 ### 模式 1 的视频说明
 
-TITAN_V 默认**没有** MediaMTX，因此视频主通道（RTSP→WebRTC）不可用，看板会自动降级到
+机器人侧主机默认**没有** MediaMTX，因此视频主通道（RTSP→WebRTC）不可用，看板会自动降级到
 **MQTT-JPEG 兜底帧**（1 fps 快照，约 17.7KB/帧 @640×360）。功能可用，只是不流畅。
 
 需要主通道时，把云端的二进制和配置拷过来：
@@ -93,9 +93,9 @@ TITAN_V 默认**没有** MediaMTX，因此视频主通道（RTSP→WebRTC）不�
 ```bash
 # 在云端
 sudo tar czf /tmp/mediamtx.tgz /usr/local/bin/mediamtx /etc/mediamtx/mediamtx.yml
-# 拷到 TITAN_V 后
+# 拷到机器人侧主机后
 sudo tar xzf mediamtx.tgz -C /
-# 把 webrtcAdditionalHosts 改成 TITAN_V 的局域网 IP，再
+# 把 webrtcAdditionalHosts 改成该机的局域网 IP，再
 sudo systemctl enable --now mediamtx   # 或手工 /usr/local/bin/mediamtx /etc/mediamtx/mediamtx.yml
 ```
 
@@ -103,24 +103,24 @@ sudo systemctl enable --now mediamtx   # 或手工 /usr/local/bin/mediamtx /etc/
 
 ## 模式 2：云端分离（生产 / 远程控制）
 
-> ### ⚠️ 先替换地址：`43.172.91.67` 是作者的测试服务器
+> ### ⚠️ 先替换地址：`<你的服务器IP>` 是作者的测试服务器
 >
-> 下面所有命令里的 `43.172.91.67` 都是**作者自己的腾讯云机器**。换成你自己的服务器
+> 下面所有命令里的 `<你的服务器IP>` 都是**作者自己的腾讯云机器**。换成你自己的服务器
 > （`<你的IP>`）之后再执行，否则你的机器人会把遥测和视频推给别人的服务器。
 >
 > | 替换点 | 变量 / 参数 | 说明 |
 > |---|---|---|
-> | `deploy/switch_config.sh` | `CLOUD_HOST`（默认 `43.172.91.67`） | 也可一次性覆盖：`CLOUD_HOST=<你的IP> ./switch_config.sh cloud` |
+> | `deploy/switch_config.sh` | `CLOUD_HOST`（默认 `<你的服务器IP>`） | 也可一次性覆盖：`CLOUD_HOST=<你的IP> ./switch_config.sh cloud` |
 > | `deploy/mode2_cloud_side.sh` | 云端本机地址 / 端口 | 云端一侧执行，一般无需改 |
 > | `deploy/mode2_robot_side.sh` | `--host <你的IP>`、脚本内默认 `HOST` | 端侧连云端 |
-> | `deploy/push_cloud_app.sh` | `CLOUD_HOST` / ssh 目标（默认 `ubuntu@43.172.91.67`） | 一键同步看板代码 |
+> | `deploy/push_cloud_app.sh` | `CLOUD_HOST` / ssh 目标（默认 `ubuntu@<你的服务器IP>`） | 一键同步看板代码 |
 > | `deploy/mediamtx.yml` | `webrtcAdditionalHosts` | 必须填公网 IP，否则 WHEP 拉流失败 |
 > | `dashboard/public/qbot-config.js` | `mqtt.brokerUrl`、`streaming.whepBase` | 看板运行时配置（`switch_config.sh` 会改写它） |
 > | `src/quadruped_sim/launch/quadruped_gz.launch.py` | `broker_host`、`rtsp_server` | `broker_host` 可用 launch 参数传；`rtsp_server` 写死，由脚本 `sed` 临时改 |
 > | `src/quadruped_mqtt_bridge/src/image_sender.cpp` | RTSP 推流地址默认值 | 直接改源码 |
 > | 下文验证命令（`ffprobe` / `curl` / `ssh`） | 命令里的 IP | 换成你的 |
 
-### ① 云端一侧（腾讯云 43.172.91.67）
+### ① 云端一侧（腾讯云 <你的服务器IP>）
 
 #### 首次部署（从零到可用，约 15 分钟）
 
@@ -213,7 +213,7 @@ cd /opt/qbot/deploy
 **git 已跟踪文件**打包，保证云端内容可追溯到某个 commit：
 
 ```bash
-# 在 TITAN_V（或任何有仓库 + 能 ssh 到云端的机器）上执行
+# 在机器人侧主机（或任何有仓库 + 能 ssh 到云端的机器）上执行
 ./deploy/push_cloud_app.sh              # 打包 → 上传 → 覆盖 → 构建 → 重启
 ./deploy/push_cloud_app.sh --dry-run    # 只看会传什么
 ./deploy/push_cloud_app.sh --no-build   # 只同步源码，不重新构建前端
@@ -229,14 +229,14 @@ cd /opt/qbot/deploy
    存在、`index.html` 保留引用、bundle 含 `__QBOT_CONFIG__`），任一丢失直接失败
 5. 重启 systemd 服务并打印状态；写入 `.deployed-rev` 标记当前部署版本
 
-需要先能免密登录云端。在 TITAN_V 上用专用密钥（不要复用已有私钥）：
+需要先能免密登录云端。在机器人侧主机上用专用密钥（不要复用已有私钥）：
 
 ```bash
 ssh-keygen -t ed25519 -N "" -C "qbot-deploy@titan_v" -f ~/.ssh/qbot_cloud
 # 把 ~/.ssh/qbot_cloud.pub 追加到云端的 ~/.ssh/authorized_keys
 cat >> ~/.ssh/config <<'EOF'
 Host qbot-cloud
-    HostName 43.172.91.67
+    HostName <你的服务器IP>
     User ubuntu
     IdentityFile ~/.ssh/qbot_cloud
 EOF
@@ -275,18 +275,18 @@ journalctl -u qbot-robot -f                # 看日志
 | 磁盘 | `/opt/qbot` 约 280 MB（模型 229MB + node_modules 45MB + dist 6MB） |
 | CPU | ASR 单次识别约 0.3s（3.6 秒音频，numThreads=2） |
 
-> **注意**：这台机器上还有其它服务（`sub2api`、`postgres` 等）。Node 装在
+> **注意**：这台机器上可能还有其它服务（如 `postgres` 等）。Node 装在
 > `/opt/qbot/node` 而非系统路径，就是为了不干扰它们；部署前后确认它们仍在运行。
 
-### ② 机器人一侧（TITAN_V）
+### ② 机器人一侧
 
 ```bash
 ./switch_config.sh cloud        # 若看板也在本机跑，切到云端地址
 ./mode2_robot_side.sh
 ```
 
-启动内容：ROS2 + 四个 MQTT 节点（`broker_host:=43.172.91.67`）+ ffmpeg 推流到
-`rtsp://43.172.91.67:8554/cam/robot-01`
+启动内容：ROS2 + 四个 MQTT 节点（`broker_host:=<你的服务器IP>`）+ ffmpeg 推流到
+`rtsp://<你的服务器IP>:8554/cam/robot-01`
 
 脚本会先做连通性预检（MQTT 1883 / RTSP 8554 是否可达），不可达会明确告警。
 
@@ -337,12 +337,12 @@ curl -s -i -N -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
 # 云端：视频是否真有流（本机有 ffmpeg 时）
 ffprobe -v error -rtsp_transport tcp -select_streams v:0 \
   -show_entries stream=codec_name,width,height,avg_frame_rate \
-  -i rtsp://43.172.91.67:8554/cam/robot-01 -read_intervals '%+5'
+  -i rtsp://<你的服务器IP>:8554/cam/robot-01 -read_intervals '%+5'
 
 # 云端：WHEP 端点是否响应
 curl -s -o /dev/null -w 'HTTP %{http_code}\n' -X POST \
   -H 'Content-Type: application/sdp' --data-binary @offer.sdp \
-  http://43.172.91.67:8889/cam/robot-01/whep
+  http://<你的服务器IP>:8889/cam/robot-01/whep
 ```
 
 ---

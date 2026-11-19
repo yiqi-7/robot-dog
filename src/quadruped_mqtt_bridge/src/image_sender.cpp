@@ -78,7 +78,9 @@ public:
     // "遥测有、画面没有"。为空则不调用 username_pw_set（匿名连接）。
     username_   = declare_parameter("username", "");
     password_   = declare_parameter("password", "");
-    rtsp_server_ = declare_parameter("rtsp_server", "43.172.91.67");
+    // 默认指向本机：别人的机器上不该默默把画面推到某个公网地址。
+    // 模式 2 由 launch 参数 rtsp_server:=<中转服务器> 显式传入。
+    rtsp_server_ = declare_parameter("rtsp_server", "127.0.0.1");
     rtsp_port_  = declare_parameter("rtsp_port", 8554);
     // 是否推 RTSP 视频流。模式 1（本地全栈、没有本地中转）必须传 false：
     // 否则 ffmpeg 会按默认地址把画面推到公网云端，与"模式 1 不出网"的语义相反。

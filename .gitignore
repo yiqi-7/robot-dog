@@ -66,3 +66,6 @@ qbot-app-backup-*.tar.gz
 # 防误提交：shell 引号事故产物（这类文件名不可能是真实源文件）
 =?[0-9]*
 [\[\]{}|^$()]*
+
+# 真实部署地址（含服务器 IP / 私钥路径），只入库 qbot.env.example
+deploy/qbot.env

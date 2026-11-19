@@ -36,22 +36,24 @@ The project supports two topologies — **run everything on one machine first, t
 | | Mode 1: Local all-in-one | Mode 2: Split (cloud) |
 |---|---|---|
 | Use case | Reading the code / single-machine demo | Production / remote control |
-| ROS 2 | TITAN_V | TITAN_V |
-| MQTT + video relay + voice gateway + dashboard | all on TITAN_V | Tencent Cloud `43.172.91.67` |
+| ROS 2 | robot-side host | robot-side host |
+| MQTT + video relay + voice gateway + dashboard | all on the robot host | your own relay server (see `deploy/qbot.env`) |
 
 > ### ⚠️ Read this before deploying to your own environment
 >
-> Every `43.172.91.67` in this repository is **the author's own Tencent Cloud test box**, not a
-> public service. Copying it verbatim makes your deployment talk to somebody else's server
-> (and push your robot's camera feed there).
-> **When deploying to your own environment, replace all of these addresses with your own
-> server IP / domain name.**
+> This repository ships **no real server address**. `YOUR_SERVER_IP` is a placeholder for your
+> own relay server; put the real value in `deploy/qbot.env` (git-ignored):
+
+>     cp deploy/qbot.env.example deploy/qbot.env
+>     # then edit CLOUD_HOST / PUBLIC_IP
+
+> See `deploy/qbot.env.example` and `deploy/README-DEPLOY.md` for every field.
 >
 > Replacement checklist (`<YOUR_IP>` = your own server address):
 >
 > | Where | Variable / parameter | How to change it |
 > |---|---|---|
-> | `deploy/switch_config.sh` | `CLOUD_HOST` (default `43.172.91.67`) | Edit the default, or override: `CLOUD_HOST=<YOUR_IP> ./switch_config.sh cloud` |
+> | `deploy/switch_config.sh` | `CLOUD_HOST` (see `deploy/qbot.env`) | Write it into `deploy/qbot.env`, or override: `CLOUD_HOST=<YOUR_IP> ./switch_config.sh cloud` |
 > | `dashboard/public/qbot-config.js` | `mqtt.brokerUrl`, `streaming.whepBase` | Dashboard **runtime** config — edit and refresh the browser (no rebuild needed) |
 > | `deploy/mediamtx.yml` | `webrtcAdditionalHosts` | Must be your public IP, otherwise browser WHEP cannot connect |
 > | `deploy/mode2_robot_side.sh` | `--host <YOUR_IP>` | Robot-side argument (also change the default inside the script) |
@@ -70,8 +72,8 @@ The project supports two topologies — **run everything on one machine first, t
 ./deploy/switch_config.sh local && ./deploy/mode1_local_all.sh
 
 # Mode 2: cloud
-./deploy/mode2_cloud_side.sh                       # on 43.172.91.67 (use your own cloud)
-./deploy/mode2_robot_side.sh --host 43.172.91.67   # on TITAN_V (use your own cloud)
+./deploy/mode2_cloud_side.sh                       # run on your relay server
+./deploy/mode2_robot_side.sh --host YOUR_SERVER_IP   # run on the robot side
 
 # Stop: pick ONE of local / cloud / robot / all.
 # Do not copy `local|cloud|robot|all` literally — in a shell `|` is a pipe.
@@ -127,13 +129,13 @@ source install/setup.bash
 ros2 launch quadruped_sim quadruped_gz.launch.py \
   gui:=false rviz:=false nav:=true gait:=champ teleop:=false patrol:=false \
   map:=$(pwd)/maps/factory_full.yaml \
-  broker_host:=43.172.91.67 broker_port:=1883
+  broker_host:=YOUR_SERVER_IP broker_port:=1883
 ```
 
 ### Dashboard
 
 ```bash
-http://43.172.91.67:8080          # Mode 2
+http://YOUR_SERVER_IP:8080          # Mode 2
 http://127.0.0.1:8080             # Mode 1
 ```
 

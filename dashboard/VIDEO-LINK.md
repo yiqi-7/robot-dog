@@ -10,7 +10,7 @@ Gazebo rgb 相机 → /rgb_camera → image_sender(ffmpeg, H.264 禁B帧)
                     看板浏览器 http://<中转服务器>:8889/cam/<id>/whep
 ```
 
-> ⚠️ **本文里的 `43.172.91.67` 是作者的测试服务器**。部署到你自己的环境时请全部替换：
+> ⚠️ **本文里的 `<你的服务器IP>` 是作者的测试服务器**。部署到你自己的环境时请全部替换：
 > `src/quadruped_sim/launch/quadruped_gz.launch.py` 的 `rtsp_server`、
 > `deploy/mediamtx.yml` 的 `webrtcAdditionalHosts`、
 > `dashboard/public/qbot-config.js` 的 `streaming.whepBase`。
@@ -27,7 +27,7 @@ Gazebo rgb 相机 → /rgb_camera → image_sender(ffmpeg, H.264 禁B帧)
 端侧启动参数（`quadruped_gz.launch.py`）：
 
 ```python
-"rtsp_server": "43.172.91.67",   # 中转服务器公网 IP
+"rtsp_server": "<你的服务器IP>",   # 中转服务器公网 IP
 "rtsp_port": 8554,
 ```
 
@@ -37,7 +37,7 @@ Gazebo rgb 相机 → /rgb_camera → image_sender(ffmpeg, H.264 禁B帧)
 webrtc: yes
 webrtcAddress: :8889
 # 关键：不填公网 IP，浏览器只能拿到内网候选，公网访问必然建连失败
-webrtcAdditionalHosts: [43.172.91.67]
+webrtcAdditionalHosts: [<你的服务器IP>]
 
 paths:
   cam/robot-01:
@@ -76,17 +76,17 @@ paths:
 # 1) 公网 RTSP 是否真有流（任意装了 ffmpeg 的机器）
 ffprobe -v error -rtsp_transport tcp -select_streams v:0 \
   -show_entries stream=codec_name,width,height,avg_frame_rate \
-  -i rtsp://43.172.91.67:8554/cam/robot-01 -read_intervals "%+5"
+  -i rtsp://<你的服务器IP>:8554/cam/robot-01 -read_intervals "%+5"
 
 # 2) WHEP 端点是否响应（在云端或任意 Linux 上）
 curl -i -X POST -H "Content-Type: application/sdp" \
-  --data-binary @offer.sdp http://43.172.91.67:8889/cam/robot-01/whep
+  --data-binary @offer.sdp http://<你的服务器IP>:8889/cam/robot-01/whep
 
 # 3) 看板真实浏览器拉流（先手工启动 Chrome 带调试端口）
 chrome.exe --remote-debugging-port=9225 --no-sandbox --user-data-dir=%TEMP%\chrome-v5 about:blank
 ffprobe -v error -rtsp_transport tcp -select_streams v:0 \
   -show_entries stream=codec_name,width,height -of csv=p=0 \
-  -i rtsp://43.172.91.67:8554/cam/robot-01   # 验证推流可拉
+  -i rtsp://<你的服务器IP>:8554/cam/robot-01   # 验证推流可拉
 ```
 
 > 本机 Chrome 的 `--headless=new` / `--headless=old` 都起不来（启动器进程立刻退出），

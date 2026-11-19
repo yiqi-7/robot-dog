@@ -14,8 +14,8 @@ import sys
 import time
 
 # 工作区路径：优先取环境变量，便于换机器/换盘符时不改代码
-WS = os.environ.get("QBOT_WS", "/run/media/wby/shuju/Document/robot-dog")
-# FastDDS 的 UDP profile 随用户家目录变化，不再写死 /home/wby
+WS = os.environ.get("QBOT_WS") or os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+# FastDDS 的 UDP profile 随用户家目录变化，这里用 $HOME 推导
 FASTDDS = os.environ.get("FASTRTPS_PROFILE",
                          os.path.expanduser("~/fastdds_udp.xml"))
 ENV = ("cd %s && source /opt/ros/lyrical/setup.bash && source install/setup.bash && "
@@ -144,7 +144,7 @@ check("上报日志>=2 条", len(m) >= 2, m[-1][-60:] if m else "无")
 print("=== 3c. 语音全链路 ===")
 t_start = int(time.time() * 1000) - 2000   # voice/commands 是 retained 快照，只认本轮指令
 bg(ENV + " && ros2 run quadruped_mqtt_bridge voice_source --ros-args -p mode:=file "
-   '-p "wav_path:=/home/wby/voice-clips/cmd_inspection.wav" -p loop:=false', "/tmp/voice_p5.log")
+   '-p "wav_path:=$HOME/voice-clips/cmd_inspection.wav" -p loop:=false', "/tmp/voice_p5.log")
 cmd_id = None
 cur = None
 for _ in range(6):

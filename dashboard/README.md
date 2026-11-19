@@ -7,7 +7,7 @@
 > ### ⚠️ 默认配置连的是作者的测试服务器
 >
 > `public/qbot-config.js` 里 `mqtt.brokerUrl` / `streaming.whepBase` 的默认值是
-> `43.172.91.67`（**作者自己的腾讯云测试机**，不是公共服务）。
+> `<你的服务器IP>`（**作者自己的腾讯云测试机**，不是公共服务）。
 > 全新 clone 后直接构建，看板会**静默连到那台机器**。
 > 本地开发请把这两项**替换**成本机 / 你自己的地址，或运行 `deploy/switch_config.sh local`
 > （它会把 `public/qbot-config.js` 与 `dist/qbot-config.js` 两份一起指向 `127.0.0.1`）。
@@ -26,7 +26,7 @@
 `src/config.ts` 与 `public/qbot-config.js` 里 `mode` 的默认值都是 `"real"`，
 所以 `npm run dev` 起来后看板会**直接去连 MQTT broker**，不会离线跑假数据。
 `brokerUrl` 的取值优先级是 `qbot-config.js` > `config.ts` 的页面主机名兜底，
-因此默认连的是 `ws://43.172.91.67:8083/mqtt`（作者的云端）。
+因此默认连的是 `ws://<你的服务器IP>:8083/mqtt`（作者的云端）。
 
 ```bash
 npm install

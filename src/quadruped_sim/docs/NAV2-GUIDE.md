@@ -66,7 +66,7 @@ behavior_server  ──┼─> /cmd_vel_nav (Twist)
 
 ```bash
 ros2 launch quadruped_sim quadruped_gz.launch.py gait:=champ nav:=true \
-  map:=/run/media/wby/shuju/Document/robot-dog/maps/factory_full.yaml
+  map:=<仓库路径>/maps/factory_full.yaml
 ```
 
 - `map` 留空 -> slam_toolbox 在线建图（首次建图用）
@@ -115,11 +115,11 @@ ros2 launch quadruped_sim quadruped_gz.launch.py gait:=champ nav:=true \
   size or network constraints`；
 - `/dev/shm` 里残留上百个 `fastdds_*` 段文件（清掉也复现）。
 
-修法：用 UDP-only profile 启动整栈（文件 `/home/wby/fastdds_udp.xml`）：
+修法：用 UDP-only profile 启动整栈（文件 `$HOME/fastdds_udp.xml`）：
 
 ```bash
-export FASTRTPS_DEFAULT_PROFILES_FILE=/home/wby/fastdds_udp.xml
-ros2 launch quadruped_sim quadruped_gz.launch.py nav:=true   map:=/run/media/wby/shuju/Document/robot-dog/maps/factory_full.yaml
+export FASTRTPS_DEFAULT_PROFILES_FILE=$HOME/fastdds_udp.xml
+ros2 launch quadruped_sim quadruped_gz.launch.py nav:=true   map:=<仓库路径>/maps/factory_full.yaml
 ```
 
 实测效果：odom/scan 丢包从每分钟数十条降到 **0**，lifecycle 由

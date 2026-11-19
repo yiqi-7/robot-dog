@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# 模式 2 · 机器人一侧（在 TITAN_V 上执行）
+# 模式 2 · 机器人一侧（在机器人侧主机上执行）
 #
-#   只跑 ROS2 仿真与四个 MQTT 节点，所有数据推到云端 43.172.91.67：
+#   只跑 ROS2 仿真与四个 MQTT 节点，所有数据推到云端（CLOUD_HOST）：
 #     遥测/任务/语音上行 → MQTT 1883
 #     视频               → RTSP 8554（image_sender 的 ffmpeg 推流）
 #
@@ -10,13 +10,17 @@
 # ===========================================================================
 set -euo pipefail
 
+# 真实部署地址放在 deploy/qbot.env（不入库），参考同目录 qbot.env.example
+_qbot_env="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qbot.env"
+if [[ -f "$_qbot_env" ]]; then . "$_qbot_env"; fi
+
 # ---------------------------- 配置 ----------------------------
 # 工作区路径按脚本所在位置推导（脚本在 <工作区>/deploy/ 下），
 # 这样在任意目录 clone 都能直接用，无需改脚本；需要时可用 WS=... 覆盖。
 WS="${WS:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 MAP="${WS}/maps/factory_full.yaml"
 LAUNCH="${WS}/src/quadruped_sim/launch/quadruped_gz.launch.py"
-CLOUD_HOST="${CLOUD_HOST:-43.172.91.67}"      # 腾讯云中转服务器
+CLOUD_HOST="${CLOUD_HOST:-}"      # 中转服务器，由 deploy/qbot.env 或环境变量提供
 MQTT_PORT="${MQTT_PORT:-1883}"
 RTSP_PORT="${RTSP_PORT:-8554}"
 ROBOT_ID="${ROBOT_ID:-robot-01}"
@@ -30,7 +34,7 @@ usage() {
 
 选项:
   -h, --help        显示本帮助
-  --host HOST       云端地址（默认 43.172.91.67）
+  --host HOST       云端地址（默认取 CLOUD_HOST）
   --no-ros          只切换配置，不启动 ROS2
   --wait SEC        启动后等待秒数再自检（默认 115）
   --keep-rtsp       不修改 launch 的 rtsp_server（已手工改好时用）
@@ -119,11 +123,12 @@ info "启动 ROS2（broker_host=${CLOUD_HOST}）…"
 ( cd "$WS" && setsid nohup bash -c "
     source /opt/ros/lyrical/setup.bash
     source install/setup.bash
-    export FASTRTPS_DEFAULT_PROFILES_FILE=/home/wby/fastdds_udp.xml
+    export FASTRTPS_DEFAULT_PROFILES_FILE=${HOME}/fastdds_udp.xml
     exec ros2 launch quadruped_sim quadruped_gz.launch.py \
       gui:=false rviz:=false nav:=true gait:=champ teleop:=false patrol:=false \
       map:=${MAP} \
-      broker_host:=${CLOUD_HOST} broker_port:=${MQTT_PORT}
+      broker_host:=${CLOUD_HOST} broker_port:=${MQTT_PORT} \
+      rtsp_server:=${CLOUD_HOST}
   " >"$LOG_ROS" 2>&1 & )
 
 info "等待 ${WAIT_SEC} 秒初始化…"
