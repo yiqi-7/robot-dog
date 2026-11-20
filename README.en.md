@@ -4,6 +4,8 @@
 
 A quadruped inspection robot simulation built with **ROS 2 Lyrical, Gazebo Sim 10, CHAMP, and Nav2**. The repository includes the robot model, mapping/localization/navigation, waypoint patrol, MQTT telemetry and task interfaces, voice pipeline, video transport, and a browser-based operations dashboard.
 
+[Quick start](#quick-start-mode-1) · [Deployment guide](deploy/README-DEPLOY.md) · [Report an issue](https://github.com/yiqi-7/robot-dog/issues)
+
 > This project is validated primarily in simulation and has not been validated on physical quadruped hardware. “Obstacle avoidance” here means LiDAR/costmap avoidance while navigating through Nav2; it is not an independent emergency-stop guarantee for every motion mode.
 
 ## Capabilities
@@ -40,13 +42,13 @@ cp deploy/qbot.env.example deploy/qbot.env
 
 ## Quick start: Mode 1
 
-Target environment: Ubuntu 26.04, ROS 2 Lyrical, and Gazebo Sim 10. Install dependencies and source ROS:
+Target environment: Ubuntu 26.04, ROS 2 Lyrical, and Gazebo Sim 10. Mode 1 also requires Node.js 22.12 or later and npm. Install dependencies and source ROS:
 
 ```bash
 sudo apt install ros-lyrical-desktop ros-lyrical-navigation2 \
   ros-lyrical-slam-toolbox ros-lyrical-ros-gz \
   libmosquitto-dev mosquitto mosquitto-clients nlohmann-json3-dev \
-  libopencv-dev ffmpeg
+  libopencv-dev libx11-dev ffmpeg
 source /opt/ros/lyrical/setup.bash
 ```
 
@@ -62,7 +64,7 @@ The Mode 1 script also requires the ignored `quadruped-ops/` runtime copy (dashb
 ```bash
 cp -a dashboard quadruped-ops
 cd quadruped-ops
-npm install
+npm ci
 npm run build
 cd ..
 ```
@@ -84,6 +86,14 @@ Start and stop:
 ```
 
 Nav2, CHAMP, patrol, and `voice_source` are enabled by default. Pass `voice:=false` to the launch file on hosts without a microphone. See the [deployment guide](deploy/README-DEPLOY.md) for script options and complete setup. Open `http://127.0.0.1:8080` after startup.
+
+Verify that the dashboard responds:
+
+```bash
+curl -fsS -o /dev/null -w 'HTTP %{http_code}\n' http://127.0.0.1:8080/
+```
+
+On success, this prints `HTTP 200`. For end-to-end robot telemetry and video checks, see the [deployment verification checklist](deploy/README-DEPLOY.md#验证清单).
 
 ## Repository layout
 
@@ -113,7 +123,7 @@ Dashboard tests:
 
 ```bash
 cd dashboard
-npm install
+npm ci
 npm test
 npm run build
 ```
