@@ -4,6 +4,8 @@
 
 基于 **ROS 2 Lyrical、Gazebo Sim 10、CHAMP 和 Nav2** 的四足巡检机器人仿真项目。项目包含机器人模型与仿真、建图/定位/导航、航点巡逻、MQTT 遥测与任务接口、语音链路、视频流，以及浏览器运维看板。
 
+[快速开始](#快速开始模式-1) · [完整部署指南](deploy/README-DEPLOY.md) · [问题反馈](https://github.com/yiqi-7/robot-dog/issues)
+
 > 项目目前以仿真验证为主，尚未在真实四足硬件上完成验证。这里的“避障”指 Nav2 导航过程中的激光雷达 costmap 避障，不代表任何运动场景都有独立的安全急停保护。
 
 ## 能力概览
@@ -40,13 +42,13 @@ cp deploy/qbot.env.example deploy/qbot.env
 
 ## 快速开始：模式 1
 
-目标环境为 Ubuntu 26.04、ROS 2 Lyrical 与 Gazebo Sim 10。先安装项目依赖，并确保已 source ROS 环境：
+目标环境为 Ubuntu 26.04、ROS 2 Lyrical 与 Gazebo Sim 10。模式 1 还需要 Node.js 22.12 或更新版本及 npm。先安装项目依赖，并确保已 source ROS 环境：
 
 ```bash
 sudo apt install ros-lyrical-desktop ros-lyrical-navigation2 \
   ros-lyrical-slam-toolbox ros-lyrical-ros-gz \
   libmosquitto-dev mosquitto mosquitto-clients nlohmann-json3-dev \
-  libopencv-dev ffmpeg
+  libopencv-dev libx11-dev ffmpeg
 source /opt/ros/lyrical/setup.bash
 ```
 
@@ -62,7 +64,7 @@ source install/setup.bash
 ```bash
 cp -a dashboard quadruped-ops
 cd quadruped-ops
-npm install
+npm ci
 npm run build
 cd ..
 ```
@@ -84,6 +86,14 @@ sudo systemctl restart mosquitto
 ```
 
 默认启动 Nav2、CHAMP、巡逻和 `voice_source`。需要无麦克风运行时，可将 `voice:=false` 传给 launch；模式脚本的完整选项和准备步骤见 [部署指南](deploy/README-DEPLOY.md)。启动后打开 `http://127.0.0.1:8080`。
+
+验证看板入口：
+
+```bash
+curl -fsS -o /dev/null -w 'HTTP %{http_code}\n' http://127.0.0.1:8080/
+```
+
+正常时应输出 `HTTP 200`。机器人状态和视频链路的端到端检查步骤见[部署指南的验证清单](deploy/README-DEPLOY.md#验证清单)。
 
 ## 主要目录
 
@@ -113,7 +123,7 @@ colcon test-result --verbose
 
 ```bash
 cd dashboard
-npm install
+npm ci
 npm test
 npm run build
 ```
