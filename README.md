@@ -1,12 +1,12 @@
 # Robot Dog
 
-用 ROS 2 和 Gazebo 在虚拟厂区里运行四足巡检机器人。仿真支持建图、定位和 Nav2 航点巡逻。通过浏览器看板派发任务，查看位置、遥测、告警和视频。
+在 Gazebo 的虚拟厂区里运行四足巡检机器人，用浏览器看板派发任务、查看地图、遥测和告警。项目目前只在仿真环境中验证。
 
-[English](README.en.md) · [部署指南](deploy/README-DEPLOY.md) · [问题反馈](https://github.com/yiqi-7/robot-dog/issues)
+[快速开始](#快速开始体验巡检看板) · [完整仿真](#继续使用) · [English](README.en.md)
 
-## 先体验看板
+## 快速开始：体验巡检看板
 
-准备 Git 和 Node.js 22.12 或更新版本。看板内置模拟数据，可在没有 ROS 2、机器人和 MQTT Broker 的电脑上运行。
+准备 Git 和 Node.js 22.12 或更新版本（含 npm）。这条路径使用内置模拟数据，不需要 ROS 2、机器人或 MQTT Broker。
 
 ```bash
 git clone https://github.com/yiqi-7/robot-dog.git
@@ -14,27 +14,22 @@ cd robot-dog/dashboard
 npm ci
 ```
 
-打开 [public/qbot-config.js](dashboard/public/qbot-config.js)，把 `mqtt.mode` 从 `"real"` 改为 `"mock"`，然后运行：
+在当前 `dashboard` 目录打开 [public/qbot-config.js](dashboard/public/qbot-config.js)，把 `mqtt.mode` 从 `"real"` 改成 `"mock"`。在同一目录运行：
 
 ```bash
 npm run dev
 ```
 
-打开 <http://localhost:3000>。看到机器人队列、厂区地图以及页脚的「内置模拟」，就可以在看板中试用任务与告警页面。
+打开终端打印的本地地址（默认 <http://localhost:3000>）。确认页脚显示「内置模拟」，再在「机器人队列」点选另一台机器人。右侧「选中机器人」卡片应切换到对应编号，并显示它的电量等遥测数据。按 `Ctrl+C` 停止。
 
-## 运行完整仿真
+## 继续使用
 
-完整仿真使用 Ubuntu 26.04、ROS 2 Lyrical、Gazebo Sim 10、CHAMP 步态控制和 Nav2 导航。按[本地部署指南](deploy/README-DEPLOY.md#模式-1本地全栈单机)准备 ROS 工作区、看板运行副本和 Mosquitto。构建并加载 ROS 工作区后，在仓库根目录运行：
-
-```bash
-./deploy/switch_config.sh local
-./deploy/mode1_local_all.sh
-```
-
-在 <http://127.0.0.1:8080> 查看实时数据，或按[验证清单](deploy/README-DEPLOY.md#验证清单)检查 MQTT 遥测与视频。运行 `./deploy/stop_all.sh local` 停止服务。[云端中转部署](deploy/README-DEPLOY.md#模式-2云端分离生产--远程控制)另有配置步骤。
+- [完整仿真](deploy/README-DEPLOY.md#模式-1本地全栈单机)：在 Ubuntu 26.04 上运行 ROS 2 Lyrical、Gazebo Sim 10、CHAMP 和 Nav2，体验建图、定位与航点巡逻。
+- [云端中转部署](deploy/README-DEPLOY.md#模式-2云端分离生产--远程控制)：分开运行仿真主机和远端服务。MQTT 与视频的示例配置允许匿名访问，仅在受信网络内使用。
+- [看板配置](dashboard/README.md) · [MQTT 接口](dashboard/MQTT-INTERFACE.md) · [语音接口](dashboard/VOICE-INTERFACE.md) · [视频链路](dashboard/VIDEO-LINK.md)
 
 <details>
-<summary>ROS 工作区准备命令</summary>
+<summary>完整仿真：准备环境和启动</summary>
 
 先按照 [ROS 2 Lyrical 文档](https://docs.ros.org/en/lyrical/Get-Started/Installation/Ubuntu-Install-Debs.html)配置软件源。在 Ubuntu 上从仓库根目录运行：
 
@@ -48,12 +43,15 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 
+按[部署指南](deploy/README-DEPLOY.md#模式-1本地全栈单机)准备 `quadruped-ops/` 看板运行副本，并启用 Mosquitto 的 TCP 和 WebSocket 监听。然后在仓库根目录运行：
+
+```bash
+./deploy/switch_config.sh local
+./deploy/mode1_local_all.sh
+```
+
+打开 <http://127.0.0.1:8080>，按[验证清单](deploy/README-DEPLOY.md#验证清单)检查 MQTT 遥测与视频。运行 `./deploy/stop_all.sh local` 停止。Nav2 的避障只覆盖导航链路，独立的近距离急停区域未启用，巡逻和恢复仍可能失败。
+
 </details>
 
-## 接口与限制
-
-[看板配置](dashboard/README.md) · [MQTT 接口](dashboard/MQTT-INTERFACE.md) · [语音接口](dashboard/VOICE-INTERFACE.md) · [视频链路](dashboard/VIDEO-LINK.md)
-
-项目目前只在仿真中验证。Nav2 的激光雷达避障仅覆盖导航链路，独立的近距离急停区域未启用。巡逻与恢复仍可能失败。示例 MQTT 和视频服务允许匿名访问，请在受信网络内使用。
-
-项目代码采用 [MIT](LICENSE) 许可。CHAMP 采用上游 BSD-3-Clause 许可，其他第三方归属见 [NOTICE](NOTICE)。
+[问题反馈](https://github.com/yiqi-7/robot-dog/issues) · [MIT 许可证](LICENSE) · [第三方许可（含 CHAMP）](NOTICE)
